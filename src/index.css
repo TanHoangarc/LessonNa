@@ -1,0 +1,44 @@
+@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Fredoka", "Inter", sans-serif;
+}
+
+/* Custom visual feedback and animations for kids' engagement */
+@layer utilities {
+  .animate-spin-slow {
+    animation: spin 8s linear infinite;
+  }
+  .animate-bounce-slow {
+    animation: bounce 3s ease-in-out infinite;
+  }
+}
+
+/* Rounded, bubbly cartoon styling */
+body {
+  font-family: var(--font-sans);
+  background-color: #f7f9fc;
+  color: #1e293b;
+}
+
+h1, h2, h3, h4, .bubble-font {
+  font-family: var(--font-display);
+}
+
+/* Custom scrollbars for a clean kid layout */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}

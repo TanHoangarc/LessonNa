@@ -1,0 +1,6 @@
+{
+  "name": "Bé Học Tiếng Việt",
+  "description": "Ứng dụng tương tác sinh động giúp bé từ 4-6 tuổi phát âm chuẩn câu tiếng Việt, sửa lỗi ngược câu qua trò chơi ghép chữ và đối chiếu giọng nói với giáo viên bản ngữ.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
