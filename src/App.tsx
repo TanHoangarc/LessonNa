@@ -213,11 +213,6 @@ export default function App() {
       setPlayStep('puzzle');
       setCustomLessonItem(null);
       setCurrentView('active-play');
-      
-      // Auto say welcome lesson text in tutor speech
-      setTimeout(() => {
-        playVietnameseText(`Hãy học cùng cô chủ đề: ${topic.name} nào!`, accent);
-      }, 500);
     }
   };
 
@@ -344,6 +339,16 @@ export default function App() {
                 <span>📢 Giọng Nam</span>
               </button>
             </div>
+
+            {/* Teacher/Parent Mode Button */}
+            <button
+              onClick={handleTriggerParentLock}
+              className="flex items-center gap-1.5 text-xs font-black px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 border-2 border-indigo-200 border-b-4 border-b-indigo-400 text-indigo-800 rounded-2xl transition-all hover:scale-102 active:scale-95 cursor-pointer outline-none"
+              title="Cấu hình giáo trình, sửa hình minh họa, thu âm giọng nói của tất cả bé hoặc bài giảng"
+            >
+              <LucideIcons.Settings className="w-4 h-4 text-indigo-600" />
+              <span>Thầy Cô / Ba Mẹ</span>
+            </button>
 
             {/* Kid Stats Dashboard */}
             <div className="flex items-center gap-2">
@@ -633,6 +638,83 @@ export default function App() {
           &copy; 2026 Bé Học Tiếng Việt. Sáng tạo bền bỉ cho tương lai trẻ thơ Việt Nam.
         </div>
       </footer>
+
+      {/* 🔒 Parent Gate Lock Modal - High-fidelity visual security challenge */}
+      <AnimatePresence>
+        {isParentLockOpen && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-150 flex items-center justify-center p-4" id="parent-lock-modal">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-[32px] border-4 border-yellow-400 p-6 md:p-8 max-w-sm w-full shadow-2xl relative overflow-hidden text-center"
+            >
+              <div className="mx-auto w-14 h-14 bg-indigo-50 border-2 border-indigo-100 rounded-2xl flex items-center justify-center text-2xl mb-4 shadow-inner">
+                🔒
+              </div>
+
+              <h4 className="text-base font-black text-sky-950 uppercase tracking-tight font-sans">
+                VÙNG BẢO MẬT CHO CHA MẸ
+              </h4>
+              <p className="text-[11px] text-slate-500 font-bold mt-2 leading-relaxed">
+                Bé ơi, đây là khu vực chỉnh sửa giáo án dành cho Thầy Cô & Ba Mẹ! Phụ huynh vui lòng giải bài toán nhỏ dưới đây để tiếp tục nhé:
+              </p>
+
+              {/* Math Question Container */}
+              <div className="my-5 bg-slate-50 border-2 border-slate-100 rounded-2xl py-3 px-6 flex items-center justify-center gap-2">
+                <span className="text-lg font-extrabold text-indigo-900 tracking-wider font-mono">
+                  {parentMathQuestion.q}
+                </span>
+              </div>
+
+              {/* Form Input */}
+              <form onSubmit={handleVerifyParentLock} className="space-y-4">
+                <input
+                  type="number"
+                  required
+                  autoFocus
+                  placeholder="Nhập kết quả..."
+                  value={parentMathInput}
+                  onChange={(e) => setParentMathInput(e.target.value)}
+                  className="w-full text-center text-base font-black tracking-widest text-slate-800 bg-slate-50 border-2 border-slate-200 focus:border-indigo-400 p-2.5 rounded-xl outline-none transition-all placeholder:text-slate-300 font-mono"
+                />
+
+                {parentMathError && (
+                  <p className="text-xs font-black text-rose-500 flex items-center justify-center gap-1">
+                    <LucideIcons.AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>Kết quả chưa đúng, ba mẹ thử lại nhé!</span>
+                  </p>
+                )}
+
+                {/* Submits and Controls */}
+                <div className="grid grid-cols-2 gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      playSoundEffect('pop');
+                      setIsParentLockOpen(false);
+                    }}
+                    className="bg-slate-100 hover:bg-slate-200 border-2 border-slate-300 text-slate-600 font-black text-xs py-2.5 rounded-xl transition-all cursor-pointer"
+                  >
+                    HỦY BỎ
+                  </button>
+                  <button
+                    type="submit"
+                    className="bg-indigo-600 hover:bg-indigo-700 border-2 border-indigo-800 text-white font-black text-xs py-2.5 rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-1"
+                  >
+                    <LucideIcons.CheckCircle className="w-4 h-4 stroke-[2.5]" />
+                    <span>XÁC NHẬN</span>
+                  </button>
+                </div>
+              </form>
+
+              <div className="mt-4 text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+                Xác thực thông minh chống trẻ em bấm nhầm
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
     </div>
   );

@@ -107,7 +107,7 @@ const fallbackSpeechSynthesis = (
  * Triggers a cute audio success or fail sound effect using standard Web Audio API synth
  * so we do not have to rely on external MP3 assets which might fail to fetch.
  */
-export const playSoundEffect = (type: 'success' | 'click' | 'victory' | 'pop') => {
+export const playSoundEffect = (type: 'success' | 'click' | 'victory' | 'pop' | 'wrong') => {
   try {
     const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
     const osc = audioCtx.createOscillator();
@@ -157,6 +157,15 @@ export const playSoundEffect = (type: 'success' | 'click' | 'victory' | 'pop') =
       gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
       osc.start();
       osc.stop(audioCtx.currentTime + 0.15);
+    } else if (type === 'wrong') {
+      // Clean cute warning sound - Double beep down-pitch
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(220, audioCtx.currentTime); // A3
+      osc.frequency.setValueAtTime(165, audioCtx.currentTime + 0.15); // E3
+      gainNode.gain.setValueAtTime(0.25, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.35);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.35);
     }
   } catch (err) {
     console.error("Audio Synthesis error:", err);

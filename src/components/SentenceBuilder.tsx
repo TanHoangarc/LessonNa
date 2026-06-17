@@ -67,12 +67,13 @@ export default function SentenceBuilder({
       } else {
         // Reversed or incorrect order sentence
         setShakeCount(prev => prev + 1);
-        playSoundEffect('pop');
-        // Gentle teacher guide
+        playSoundEffect('wrong');
+        
+        // Wait 1 second (so children see results and face-shake animation) then bounce words back to original pool
         setTimeout(() => {
-          // Speak warning text
-          playVietnameseText("Bé ơi, sắp xếp như vậy bị ngược câu rồi nè! Mình xếp lại nha con!", accent);
-        }, 300);
+          setSelectedWords([]);
+          setScrambledPool([...item.scrambledWords].map(w => w.trim()));
+        }, 1000);
       }
     }
   };
