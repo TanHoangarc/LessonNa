@@ -320,7 +320,7 @@ export default function CustomLessonCreator({
       setSentence(data.sentence || '');
       setQuestion(data.question || '');
       setPhonetics(data.phoneticsGuide || '');
-      setFunFact(data.funFact || 'Rút chữ đúng chuẩn rèn luyện từ siêu vui!');
+      setFunFact(data.funFact || '');
       setEmoji(data.emoji || '✨');
       setTopicName(topicInput.trim());
       setDifficulty('trung bình');
@@ -388,18 +388,20 @@ export default function CustomLessonCreator({
       attempts++;
     }
 
+    const cleanSentence = sentence.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g, "").replace(/\s+/g, " ").trim();
+
     const compiledItem: LessonItem = {
       id: `custom-${Date.now()}`,
-      sentence: sentence.trim(),
+      sentence: cleanSentence,
       question: question.trim() || undefined,
       type: 'sentence',
       topic: 'custom-topic',
       scrambledWords: scrambled,
       difficulty,
       emoji: emoji.trim() || '⭐️',
-      guideVoiceText: sentence.trim(),
+      guideVoiceText: cleanSentence,
       phoneticsGuide: phonetics.trim() || undefined,
-      funFact: funFact.trim() || "Thầy Cô/Ba Mẹ đã thiết kế bài học bổ ích cho bé yêu!",
+      funFact: funFact.trim() || undefined,
       customImage: customImage || undefined,
       customAudio: customAudio || undefined
     };
@@ -721,7 +723,7 @@ export default function CustomLessonCreator({
                           : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200'
                       }`}
                     >
-                      {diff}
+                      {diff === 'dễ' ? 'Dễ (3-4 từ)' : diff === 'trung bình' ? 'T.Bình (5-7 chữ)' : 'Khó (>8 chữ)'}
                     </button>
                   ))}
                 </div>

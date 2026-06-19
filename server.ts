@@ -126,6 +126,80 @@ Hãy trả về kết quả dưới định dạng JSON có cấu trúc như sau
   }
 });
 
+// API 3: Generate custom childhood illustration image using prompt (Supports gemini-2.5-flash-image with vector SVG fallback)
+app.post('/api/generate-image', async (req, res) => {
+  const { prompt } = req.body;
+  if (!prompt) {
+    return res.status(400).json({ error: 'Prompt is required' });
+  }
+
+  try {
+    // Try calling official image generation model
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash-image',
+      contents: {
+        parts: [
+          { text: `${prompt}, cute flat cartoon sticker style for kids, vibrant colors, clean white background` }
+        ]
+      },
+      config: {
+        imageConfig: {
+          aspectRatio: "1:1"
+        }
+      }
+    });
+
+    if (response?.candidates?.[0]?.content?.parts) {
+      for (const part of response.candidates[0].content.parts) {
+        if (part.inlineData) {
+          const base64Data = part.inlineData.data;
+          return res.json({ imageUrl: `data:image/png;base64,${base64Data}` });
+        }
+      }
+    }
+    throw new Error("No image data returned from image generation model; falling back to SVG vector generator.");
+  } catch (error) {
+    console.warn("⚠️ Official image generation model failed or is unavailable. Executing SVG vector generator backup:", error);
+    try {
+      // SVG generator using gemini-3.5-flash
+      const svgPrompt = `
+      Hãy đóng vai một nhà thiết kế hình ảnh, hoạ sĩ minh hoạ hoạt hình dễ thương cho trẻ mầm non Việt Nam.
+      Vẽ một bức tranh định dạng mã SVG chuẩn để làm tranh minh hoạ nét cao cho bài học: "${prompt}".
+      Yêu cầu thiết kế:
+      - Trả về CHỈ duy nhất 1 đoạn mã XML <svg>...</svg> hoàn chỉnh có thuộc tính viewBox="0 0 200 200". No markdown blocks, no characters, no explanations outside the tag.
+      - Sử dụng phong cách thiết kế phẳng (flat cartoon vector illustration), nét mềm mại, tròn trịa, đáng yêu.
+      - Sử dụng tông màu rực rỡ, tươi tắn như hồng pastel, đỏ mọng, vàng ấm, lục bảo, xanh mint, tím hoa anh đào.
+      - Thêm các hình trang trí nhỏ điểm xuyết (như một hai ngôi sao nhỏ lấp lánh nụ cười dễ mến ở góc, chút ánh nắng) để bức tranh rực rỡ hơn.
+      - Nghiêm cấm ghi bất kỳ chữ tiếng Anh, chữ thương hiệu hay văn bản rườm rà.
+      - Chèn thẻ <style> bên trong svg (nếu cần phối màu gradients) để tranh được tô bóng mịn màng.
+      - Đảm bảo thẻ mở đầu bằng <svg> và đóng bằng </svg>, không ghi \`\`\`xml hay \`\`\`svg hay bất kỳ văn bản nào khác.
+      `;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.5-flash',
+        contents: svgPrompt
+      });
+
+      let svgText = response.text || '';
+      // Clean up markdown blocks from response
+      svgText = svgText.replace(/```xml/g, '').replace(/```svg/g, '').replace(/```/g, '').trim();
+      
+      // Ensure it contains <svg
+      if (!svgText.includes("<svg")) {
+        // Fallback default heart/star SVG if completely garbage
+        svgText = `<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"><rect width="200" height="200" rx="40" fill="#FFF3CD"/><circle cx="100" cy="100" r="60" fill="#FF8C00"/><text x="100" y="115" font-size="50" text-anchor="middle">🎨</text></svg>`;
+      }
+
+      const base64Svg = Buffer.from(svgText).toString('base64');
+      return res.json({ imageUrl: `data:image/svg+xml;base64,${base64Svg}` });
+    } catch (fallbackError) {
+      console.error("SVG generator backup error:", fallbackError);
+      // Absolute fallback: static beautiful icon placeholder
+      return res.json({ imageUrl: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%23E0F2FE' rx='20'/><text x='50%' y='60%' font-size='40' text-anchor='middle'>⭐</text></svg>" });
+    }
+  }
+});
+
 // API 2: Generate custom kid sentence & scrambled cards on arbitrary topics (e.g. Dinosaurs, space, toys, fish)
 app.post('/api/generate-custom-lesson', async (req, res) => {
   const { userPrompt } = req.body;
@@ -193,6 +267,80 @@ Hãy trả về kết quả dưới định dạng JSON có cấu trúc chính x
       phoneticsGuide: "bạn / khủng / lon / ăn / cỏ",
       funFact: "Bạn khủng long cổ dài ăn cỏ rất hiền lành và dẻo dai đấy nha bé!"
     });
+  }
+});
+
+// API 3: Generate custom childhood illustration image using prompt (Supports gemini-2.5-flash-image with vector SVG fallback)
+app.post('/api/generate-image', async (req, res) => {
+  const { prompt } = req.body;
+  if (!prompt) {
+    return res.status(400).json({ error: 'Prompt is required' });
+  }
+
+  try {
+    // Try calling official image generation model
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash-image',
+      contents: {
+        parts: [
+          { text: `${prompt}, cute flat cartoon sticker style for kids, vibrant colors, clean white background` }
+        ]
+      },
+      config: {
+        imageConfig: {
+          aspectRatio: "1:1"
+        }
+      }
+    });
+
+    if (response?.candidates?.[0]?.content?.parts) {
+      for (const part of response.candidates[0].content.parts) {
+        if (part.inlineData) {
+          const base64Data = part.inlineData.data;
+          return res.json({ imageUrl: `data:image/png;base64,${base64Data}` });
+        }
+      }
+    }
+    throw new Error("No image data returned from image generation model; falling back to SVG vector generator.");
+  } catch (error) {
+    console.warn("⚠️ Official image generation model failed or is unavailable. Executing SVG vector generator backup:", error);
+    try {
+      // SVG generator using gemini-3.5-flash
+      const svgPrompt = `
+      Hãy đóng vai một nhà thiết kế hình ảnh, hoạ sĩ minh hoạ hoạt hình dễ thương cho trẻ mầm non Việt Nam.
+      Vẽ một bức tranh định dạng mã SVG chuẩn để làm tranh minh hoạ nét cao cho bài học: "${prompt}".
+      Yêu cầu thiết kế:
+      - Trả về CHỈ duy nhất 1 đoạn mã XML <svg>...</svg> hoàn chỉnh có thuộc tính viewBox="0 0 200 200". No markdown blocks, no characters, no explanations outside the tag.
+      - Sử dụng phong cách thiết kế phẳng (flat cartoon vector illustration), nét mềm mại, tròn trịa, đáng yêu.
+      - Sử dụng tông màu rực rỡ, tươi tắn như hồng pastel, đỏ mọng, vàng ấm, lục bảo, xanh mint, tím hoa anh đào.
+      - Thêm các hình trang trí nhỏ điểm xuyết (như một hai ngôi sao nhỏ lấp lánh nụ cười dễ mến ở góc, chút ánh nắng) để bức tranh rực rỡ hơn.
+      - Nghiêm cấm ghi bất kỳ chữ tiếng Anh, chữ thương hiệu hay văn bản rườm rà.
+      - Chèn thẻ <style> bên trong svg (nếu cần phối màu gradients) để tranh được tô bóng mịn màng.
+      - Đảm bảo thẻ mở đầu bằng <svg> và đóng bằng </svg>, không ghi \`\`\`xml hay \`\`\`svg hay bất kỳ văn bản nào khác.
+      `;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.5-flash',
+        contents: svgPrompt
+      });
+
+      let svgText = response.text || '';
+      // Clean up markdown blocks from response
+      svgText = svgText.replace(/```xml/g, '').replace(/```svg/g, '').replace(/```/g, '').trim();
+      
+      // Ensure it contains <svg
+      if (!svgText.includes("<svg")) {
+        // Fallback default heart/star SVG if completely garbage
+        svgText = `<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"><rect width="200" height="200" rx="40" fill="#FFF3CD"/><circle cx="100" cy="100" r="60" fill="#FF8C00"/><text x="100" y="115" font-size="50" text-anchor="middle">🎨</text></svg>`;
+      }
+
+      const base64Svg = Buffer.from(svgText).toString('base64');
+      return res.json({ imageUrl: `data:image/svg+xml;base64,${base64Svg}` });
+    } catch (fallbackError) {
+      console.error("SVG generator backup error:", fallbackError);
+      // Absolute fallback: static beautiful icon placeholder
+      return res.json({ imageUrl: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%23E0F2FE' rx='20'/><text x='50%' y='60%' font-size='40' text-anchor='middle'>⭐</text></svg>" });
+    }
   }
 });
 

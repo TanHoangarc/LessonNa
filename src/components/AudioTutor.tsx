@@ -304,13 +304,37 @@ export default function AudioTutor({
       {/* Target prompt */}
       <div className="text-center mb-6 bg-amber-50/40 p-6 rounded-3xl border-2 border-amber-100">
         {item.customImage ? (
-          <div className="mb-4 flex justify-center">
-            <img 
-              src={item.customImage} 
-              alt={item.sentence} 
-              className="max-h-36 max-w-full rounded-2xl border-4 border-white shadow-md object-contain"
-              referrerPolicy="no-referrer"
-            />
+          <div className="mb-4 flex justify-center relative select-none">
+            <div className="relative max-w-full overflow-hidden rounded-2xl border-4 border-white shadow-md bg-slate-900/5">
+              <img 
+                src={item.customImage} 
+                alt={item.sentence} 
+                className="max-h-36 object-contain mx-auto"
+                referrerPolicy="no-referrer"
+              />
+
+              {item.audioHotspots && item.audioHotspots.map((hp) => (
+                <button
+                  key={hp.id}
+                  type="button"
+                  style={{ left: `${hp.x}%`, top: `${hp.y}%` }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    playSoundEffect('click');
+                    if (hp.audioData) {
+                      const sound = new Audio(hp.audioData);
+                      sound.play().catch(ex => console.error(ex));
+                    } else {
+                      playVietnameseText(item.sentence, accent);
+                    }
+                  }}
+                  className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full p-2 bg-indigo-600 hover:bg-indigo-500 scale-100 hover:scale-110 active:scale-95 transition-all text-white border-2 border-white shadow-md z-30 flex items-center justify-center cursor-pointer animate-pulse"
+                  title="Nghe âm thanh ghim"
+                >
+                  <LucideIcons.Volume2 className="w-3.5 h-3.5 text-white" />
+                </button>
+              ))}
+            </div>
           </div>
         ) : (
           <div className="text-5xl mb-2 filter drop-shadow-sm">{item.emoji}</div>

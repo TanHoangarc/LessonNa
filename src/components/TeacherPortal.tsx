@@ -1,18 +1,56 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   ArrowLeft, Upload, Trash2, Volume2, Mic, Square, Play, Pause, 
-  Image as ImageIcon, Music, Check, RefreshCw, AlertCircle, Sparkles, Info, PlusCircle
+  Image as ImageIcon, Music, Check, RefreshCw, AlertCircle, Sparkles, Info, PlusCircle, FileText,
+  Cloud, Database, Copy
 } from 'lucide-react';
 import { playSoundEffect } from '../utils/audioHelper';
-import { Topic, LessonItem } from '../types';
+import { Topic, LessonItem, AudioHotspot } from '../types';
+import { MathLibraryItem, getMathIllustrations, saveMathIllustrations } from '../utils/mathLibraryHelper';
+
+const adjustSentenceForDifficulty = (sentence: string, difficulty: 'dễ' | 'trung bình' | 'khó') => {
+  let clean = sentence.trim();
+  if (!clean) return "";
+  
+  // Strip all punctuation: . , ! ? ; : - _ ( ) " '
+  let base = clean.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g, "").replace(/\s+/g, " ").trim();
+
+  const words = base.split(/\s+/).filter(Boolean);
+  
+  if (difficulty === 'dễ') {
+    // dễ (3-4 từ)
+    if (words.length > 4) {
+      base = words.slice(0, 4).join(" ");
+    }
+  } else if (difficulty === 'trung bình') {
+    // trung bình (5-7 chữ)
+    if (words.length > 7) {
+      base = words.slice(0, 7).join(" ");
+    }
+  } else if (difficulty === 'khó') {
+    // khó trên 8 chữ - keep as is, no truncation
+    base = words.join(" ");
+  }
+
+  // Double check and remove any punctuation that may still exist or be introduced
+  base = base.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g, "").trim();
+  return base;
+};
+
+
 
 interface TeacherPortalProps {
   topics: Topic[];
   onSaveTopics: (newTopics: Topic[]) => void;
   onResetSyllabus: () => void;
-  overrides: Record<string, { customImage?: string; customAudio?: string }>;
-  onSaveOverrides: (newOverrides: Record<string, { customImage?: string; customAudio?: string }>) => void;
+  overrides: Record<string, { customImage?: string; customAudio?: string; audioHotspots?: AudioHotspot[] }>;
+  onSaveOverrides: (newOverrides: Record<string, { customImage?: string; customAudio?: string; audioHotspots?: AudioHotspot[] }>) => void;
   onBackToDashboard: () => void;
+  showFunFact: boolean;
+  onToggleFunFact: (val: boolean) => void;
+  syncKey: string;
+  onUpdateSyncKey: (newKey: string) => boolean;
+  syncStatus: 'idle' | 'syncing' | 'synced' | 'error';
 }
 
 export default function TeacherPortal({
@@ -21,22 +59,265 @@ export default function TeacherPortal({
   onResetSyllabus,
   overrides,
   onSaveOverrides,
-  onBackToDashboard
+  onBackToDashboard,
+  showFunFact,
+  onToggleFunFact,
+  syncKey,
+  onUpdateSyncKey,
+  syncStatus
 }: TeacherPortalProps) {
   // Navigation: selected topic to edit
   const [selectedTopicId, setSelectedTopicId] = useState<string>(topics[0]?.id || '');
+
+  // Active Tab state for Teacher Portal
+  const [activePortalTab, setActivePortalTab] = useState<'sentence' | 'spelling' | 'math' | 'cloud'>('sentence');
+
+  // Local state for key updates
+  const [editingSyncKey, setEditingSyncKey] = useState<string>('');
+  const [copyFeedback, setCopyFeedback] = useState<boolean>(false);
+
+  // Form states for adding a new lesson
+  const [newLessonName, setNewLessonName] = useState<string>('');
+  const [newTopicType, setNewTopicType] = useState<'sentence' | 'spelling' | 'math'>('sentence');
+
+  // Auto-sync selectedTopicId and newTopicType on tab switch
+  useEffect(() => {
+    // Reset all form fields to prevent leaking between different tabs
+    setNewSentence('');
+    setNewSpellingFormula('');
+    setScrambledWordsInput('');
+    setNewQuestion('');
+    setNewFunFact('');
+    setNewPhoneticsGuide('');
+    setNewCustomImage('');
+    setNewCustomAudio('');
+    setNewCustomImageName('');
+    setNewCustomAudioName('');
+    setNewLessonHotspots([]);
+
+    if (activePortalTab === 'sentence') {
+      const sentenceTopics = topics.filter(t => !t.isSpelling && t.id !== 'danh-van' && !t.isMath && t.id !== 'toan');
+      setSelectedTopicId(sentenceTopics[0]?.id || '');
+      setNewTopicType('sentence');
+    } else if (activePortalTab === 'spelling') {
+      const spellingTopics = topics.filter(t => t.isSpelling || t.id === 'danh-van');
+      setSelectedTopicId(spellingTopics[0]?.id || '');
+      setNewTopicType('spelling');
+    } else if (activePortalTab === 'math') {
+      const mathTopics = topics.filter(t => t.isMath || t.id === 'toan');
+      setSelectedTopicId(mathTopics[0]?.id || '');
+      setNewTopicType('math');
+    } else {
+      setSelectedTopicId('');
+    }
+  }, [activePortalTab]);
+
+  // Edit active topic name/emoji state
+  const [topicNameInput, setTopicNameInput] = useState<string>('');
+  const [topicEmojiInput, setTopicEmojiInput] = useState<string>('');
+
+  // Auto-sync newLessonName on selectedTopicId shift
+  useEffect(() => {
+    const activeTopic = topics.find(t => t.id === selectedTopicId);
+    if (activeTopic) {
+      if (activePortalTab === 'sentence' || activePortalTab === 'math') {
+        setNewLessonName(`Lesson ${activeTopic.items.length + 1}`);
+      } else if (activePortalTab === 'spelling') {
+        setNewLessonName('');
+      }
+    } else {
+      setNewLessonName('');
+    }
+  }, [selectedTopicId, activePortalTab, topics]);
+
+  // Create new topic states
+  const [isCreatingTopic, setIsCreatingTopic] = useState<boolean>(false);
+  const [isCreatingSpelling, setIsCreatingSpelling] = useState<boolean>(false);
+  const [isCreatingMathTopic, setIsCreatingMathTopic] = useState<boolean>(false);
+  const [newTopicName, setNewTopicName] = useState<string>('');
+  const [newTopicEmoji, setNewTopicEmoji] = useState<string>('⭐');
+  const [newTopicDescription, setNewTopicDescription] = useState<string>('');
+
+  useEffect(() => {
+    const active = topics.find(t => t.id === selectedTopicId);
+    if (active) {
+      setTopicNameInput(active.name);
+      setTopicEmojiInput(active.emoji);
+    }
+  }, [selectedTopicId, topics]);
+
+  const handleMathImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setNewMathImageRaw(reader.result as string);
+        const rawName = file.name.split('.')[0] || '';
+        const cleanName = rawName.charAt(0).toUpperCase() + rawName.slice(1);
+        setNewMathImageName(cleanName);
+      };
+      reader.readAsDataURL(file);
+      playSoundEffect('click');
+    } catch (err) {
+      console.error("Math image file upload failed", err);
+    }
+  };
+
+  const handleSaveMathImage = () => {
+    if (!newMathImageRaw) return;
+    const nameToUse = newMathImageName.trim() || 'Hình vẽ mới';
+    const newItem: MathLibraryItem = {
+      id: `custom-math-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      name: nameToUse,
+      image: newMathImageRaw,
+      isPreset: false
+    };
+    const updated = [...mathIllustrations, newItem];
+    setMathIllustrations(updated);
+    saveMathIllustrations(updated);
+    
+    // Clear form
+    setNewMathImageRaw('');
+    setNewMathImageName('');
+    playSoundEffect('success');
+  };
+
+  const handleDeleteMathImage = (idToDelete: string) => {
+    const updated = mathIllustrations.filter(item => item.id !== idToDelete);
+    setMathIllustrations(updated);
+    saveMathIllustrations(updated);
+    playSoundEffect('wrong');
+  };
+
+  const handleResetMathIllustrations = () => {
+    localStorage.removeItem('be_hoc_tieng_viet_math_library');
+    const presets = getMathIllustrations();
+    setMathIllustrations(presets);
+    saveMathIllustrations(presets);
+    playSoundEffect('success');
+  };
+
+  const handleRenameTopic = () => {
+    if (!selectedTopicId) return;
+    if (!topicNameInput.trim()) {
+      alert("Tên chủ đề không được để trống nha ba mẹ/thầy cô!");
+      return;
+    }
+    playSoundEffect('success');
+    const updatedTopics = topics.map(topic => {
+      if (topic.id === selectedTopicId) {
+        return {
+          ...topic,
+          name: topicNameInput.trim(),
+          emoji: topicEmojiInput.trim() || topic.emoji
+        };
+      }
+      return topic;
+    });
+    onSaveTopics(updatedTopics);
+    alert("🎉 Đã cập nhật thông tin chủ đề thành công!");
+  };
+
+  const handleCreateNewTopic = () => {
+    if (!newTopicName.trim()) {
+      alert("Tên chủ đề/bài mới không được để trống nha ba mẹ/thầy cô!");
+      return;
+    }
+    const slug = (newTopicType === 'math' ? 'toan-' : (newTopicType === 'spelling' ? 'danh-van-' : 'chu-de-')) + Date.now();
+    
+    let icon = 'Sparkles';
+    let color = 'from-indigo-400 to-purple-500';
+    let borderColor = 'border-indigo-200';
+    let description = newTopicDescription.trim() || 'Chủ đề ghép câu mới lập cho bé';
+    
+    if (newTopicType === 'spelling') {
+      icon = 'PenTool';
+      color = 'from-amber-400 to-orange-500';
+      borderColor = 'border-orange-200';
+      description = newTopicDescription.trim() || 'Chủ đề đánh vần mới lập cho bé';
+    } else if (newTopicType === 'math') {
+      icon = 'Calculator';
+      color = 'from-emerald-400 to-teal-500';
+      borderColor = 'border-teal-200';
+      description = newTopicDescription.trim() || 'Chủ đề hình thành tư duy toán học cho bé';
+    }
+
+    const newTopic: Topic = {
+      id: slug,
+      name: newTopicName.trim(),
+      emoji: newTopicEmoji.trim() || '⭐',
+      icon: icon,
+      color: color,
+      borderColor: borderColor,
+      description: description,
+      items: [],
+      isSpelling: newTopicType === 'spelling',
+      isMath: newTopicType === 'math'
+    };
+
+    onSaveTopics([...topics, newTopic]);
+    setSelectedTopicId(newTopic.id);
+    
+    // reset form
+    setNewTopicName('');
+    setNewTopicEmoji('⭐');
+    setNewTopicType('sentence');
+    setNewTopicDescription('');
+    setIsCreatingTopic(false);
+    setIsCreatingSpelling(false);
+    setIsCreatingMathTopic(false);
+    playSoundEffect('success');
+    alert("🎉 Đã tạo chủ đề mới thành công! Bây giờ ba mẹ hãy thêm các bài học vào chủ đề này bên dưới nha.");
+  };
+
+  const handleDeleteTopic = () => {
+    if (!selectedTopicId) return;
+    const topicToDelete = topics.find(t => t.id === selectedTopicId);
+    if (!topicToDelete) return;
+    
+    if (window.confirm(`⚠️ CHÚ Ý: Cực kỳ cẩn thận nha ba mẹ! Có thực sự muốn XÓA hoàn toàn chủ đề "${topicToDelete.name}" cùng tất cả các bài học trong đó không?`)) {
+      playSoundEffect('pop');
+      const updatedTopics = topics.filter(t => t.id !== selectedTopicId);
+      onSaveTopics(updatedTopics);
+      if (updatedTopics.length > 0) {
+        setSelectedTopicId(updatedTopics[0].id);
+      } else {
+        setSelectedTopicId('');
+      }
+      alert("Đã xóa chủ đề thành công!");
+    }
+  };
   
   // Form states for adding a new lesson
   const [newSentence, setNewSentence] = useState<string>('');
+  const [newSpellingFormula, setNewSpellingFormula] = useState<string>('');
+  const [newMathOp, setNewMathOp] = useState<'+' | '-' | '*' | '/'>('+');
   const [newQuestion, setNewQuestion] = useState<string>('');
   const [newDifficulty, setNewDifficulty] = useState<'dễ' | 'trung bình' | 'khó'>('dễ');
   const [scrambledWordsInput, setScrambledWordsInput] = useState<string>('');
   const [newEmoji, setNewEmoji] = useState<string>('🎒');
   const [newFunFact, setNewFunFact] = useState<string>('');
   const [newPhoneticsGuide, setNewPhoneticsGuide] = useState<string>('');
+  const [newCustomImage, setNewCustomImage] = useState<string>('');
+  const [newCustomAudio, setNewCustomAudio] = useState<string>('');
+  const [newCustomImageName, setNewCustomImageName] = useState<string>('');
+  const [newCustomAudioName, setNewCustomAudioName] = useState<string>('');
+  const [creationAudPlayback, setCreationAudPlayback] = useState<boolean>(false);
+  const [selectedMathIllustrationId, setSelectedMathIllustrationId] = useState<string>('preset-chick');
 
   // Local track of editing state for each item in the selected topic
-  const [localOverrides, setLocalOverrides] = useState<Record<string, { customImage?: string; customAudio?: string }>>({});
+  const [localOverrides, setLocalOverrides] = useState<Record<string, { customImage?: string; customAudio?: string; audioHotspots?: AudioHotspot[] }>>({});
+
+  // Hotspots creation/edition state
+  const [newLessonHotspots, setNewLessonHotspots] = useState<AudioHotspot[]>([]);
+  const [selectedNewHotspotId, setSelectedNewHotspotId] = useState<string | null>(null);
+  const [draggingHotspotId, setDraggingHotspotId] = useState<string | null>(null);
+  
+  // Existing lesson hotspot administration
+  const [editingHotspotsItemId, setEditingHotspotsItemId] = useState<string | null>(null);
+  const [selectedExistingHotspotId, setSelectedExistingHotspotId] = useState<string | null>(null);
+  const [activeHpPlaybackId, setActiveHpPlaybackId] = useState<string | null>(null);
 
   useEffect(() => {
     setLocalOverrides({ ...overrides });
@@ -57,6 +338,31 @@ export default function TeacherPortal({
   // Drag-and-drop flags
   const [dragOverInputId, setDragOverInputId] = useState<string | null>(null);
 
+  // Math illustration library states
+  const [mathIllustrations, setMathIllustrations] = useState<MathLibraryItem[]>([]);
+  const [newMathImageRaw, setNewMathImageRaw] = useState<string>('');
+  const [newMathImageName, setNewMathImageName] = useState<string>('');
+
+  useEffect(() => {
+    const list = getMathIllustrations();
+    setMathIllustrations(list);
+    if (list.length > 0) {
+      setSelectedMathIllustrationId(list[0].id);
+    }
+
+    const handleSync = () => {
+      const refreshed = getMathIllustrations();
+      setMathIllustrations(refreshed);
+      if (refreshed.length > 0) {
+        setSelectedMathIllustrationId(prev => refreshed.some(i => i.id === prev) ? prev : refreshed[0].id);
+      }
+    };
+    window.addEventListener('math-library-updated', handleSync);
+    return () => {
+      window.removeEventListener('math-library-updated', handleSync);
+    };
+  }, []);
+
   useEffect(() => {
     return () => {
       // Clean up audio playback & recorders on unmount
@@ -73,6 +379,7 @@ export default function TeacherPortal({
   }, [testAudioObj, micStream]);
 
   const activeTopic = topics.find(t => t.id === selectedTopicId);
+  const isSpellingTopic = activeTopic ? !!(activeTopic.isSpelling || activeTopic.id === 'danh-van') : false;
 
   // Helper: File to Base64 convertor
   const fileToBase64 = (file: File): Promise<string> => {
@@ -287,31 +594,151 @@ export default function TeacherPortal({
 
   const handleAddNewLessonSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedTopicId || !newSentence.trim() || !scrambledWordsInput.trim()) return;
+    if (!selectedTopicId) return;
 
-    // Process scrambled words
-    const finalWords = scrambledWordsInput
-      .split(',')
-      .map(w => w.trim())
-      .filter(Boolean);
+    const isSpellingTopic = !!(activeTopic && (activeTopic.isSpelling || activeTopic.id === 'danh-van'));
+    const isMathTopic = !!(activeTopic && (activeTopic.isMath || activeTopic.id === 'toan'));
 
-    if (finalWords.length === 0) {
-      alert("Vui lòng phân nhỏ các mảnh từ ghép cách nhau bằng dấu phẩy (Ví dụ: mẹ, yêu, bé lắm)!");
+    if (isSpellingTopic && !newSpellingFormula.trim()) {
+      alert("Vui lòng nhập công thức ghép từ!");
       return;
     }
 
+    if (!isSpellingTopic && !isMathTopic && !newSentence.trim()) {
+      alert("Vui lòng nhập nội dung bài học!");
+      return;
+    }
+
+    if (isMathTopic) {
+      // Generate 5 random math operations based on newDifficulty (dễ = 10, trung bình = 50, khó = 100)
+      const maxVal = newDifficulty === 'dễ' ? 10 : (newDifficulty === 'trung bình' ? 50 : 100);
+      const mathOperations: any[] = [];
+      for (let i=0; i<5; i++) {
+        let a, b, answer;
+        if (newMathOp === '+') {
+          a = Math.floor(Math.random() * maxVal);
+          b = Math.floor(Math.random() * (maxVal - a));
+          answer = a + b;
+        } else if (newMathOp === '-') {
+          a = Math.floor(Math.random() * maxVal) + 1;
+          b = Math.floor(Math.random() * a);
+          answer = a - b;
+        } else if (newMathOp === '*') {
+          a = Math.floor(Math.random() * (maxVal === 10 ? 5 : (maxVal === 50 ? 10 : 20)));
+          b = Math.floor(Math.random() * (maxVal === 10 ? 5 : (maxVal === 50 ? 10 : 20)));
+          answer = a * b;
+        } else {
+          b = Math.floor(Math.random() * 9) + 1; // 1 to 9
+          answer = Math.floor(Math.random() * (maxVal === 10 ? 5 : (maxVal === 50 ? 10 : 20)));
+          a = b * answer;
+        }
+
+        // generate options (4 options total for balanced 2x2 or 4-col grid layout)
+        let options = [answer];
+        while (options.length < 4) {
+          const offset = Math.floor(Math.random() * 15) - 7;
+          const fake = Math.max(0, answer + (offset === 0 ? 3 : offset));
+          if (!options.includes(fake)) options.push(fake);
+        }
+        options.sort(() => Math.random() - 0.5);
+
+        mathOperations.push({
+          id: `op-${Date.now()}-${i}`,
+          expression: `${a} ${newMathOp} ${b}`,
+          correctAnswer: answer,
+          options
+        });
+      }
+
+      const chosenIllustration = mathIllustrations.find(ill => ill.id === selectedMathIllustrationId);
+      const finalMathName = newLessonName.trim() || `Lesson ${activeTopic.items.length + 1}`;
+      const finalMathSentence = `${finalMathName}: Rèn phép ${newMathOp === '+' ? 'cộng' : newMathOp === '-' ? 'trừ' : newMathOp === '*' ? 'nhân' : 'chia'} (${newDifficulty})`;
+
+      const newItem: LessonItem = {
+        id: `custom-lesson-${Date.now()}`,
+        sentence: finalMathSentence,
+        lessonName: finalMathName,
+        type: 'math',
+        topic: selectedTopicId,
+        scrambledWords: [],
+        difficulty: newDifficulty,
+        emoji: '🔢',
+        customImage: chosenIllustration?.image || undefined,
+        mathOperations
+      };
+
+      const updatedTopics = topics.map(topic => {
+        if (topic.id === selectedTopicId) {
+          return {
+            ...topic,
+            items: [...topic.items, newItem]
+          };
+        }
+        return topic;
+      });
+
+      onSaveTopics(updatedTopics);
+      setNewSentence('');
+      setNewQuestion('');
+      playSoundEffect('success');
+      alert("🎉 Đã tạo bài học toán chứa 5 phép tính trực quan thành công!");
+      return;
+    }
+
+    let finalWords: string[] = [];
+    if (isSpellingTopic) {
+      // Split by whitespace to yield B, +, a, =, Ba pieces
+      finalWords = newSpellingFormula.trim().split(/\s+/).filter(Boolean);
+    } else {
+      if (!scrambledWordsInput.trim()) {
+        alert("Vui lòng nhập các mảnh từ ghép!");
+        return;
+      }
+      finalWords = scrambledWordsInput
+         .split(',')
+         .map(w => w.trim())
+         .filter(Boolean);
+    }
+
+    if (finalWords.length === 0) {
+      if (isSpellingTopic) {
+        alert("Vui lòng nhập công thức ghép vần!");
+      } else {
+        alert("Vui lòng phân nhỏ các mảnh từ ghép cách nhau bằng dấu phẩy (Ví dụ: mẹ, yêu, bé lắm)!");
+      }
+      return;
+    }
+
+    let sentenceToSave = isSpellingTopic ? newSpellingFormula.trim() : newSentence.trim();
+    let wordsToSave = finalWords;
+
+    if (!isSpellingTopic && !isMathTopic) {
+      // Strip any punctuation from the sentence
+      sentenceToSave = sentenceToSave.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g, "").replace(/\s+/g, " ").trim();
+      // Strip punctuation from individual scrambled words
+      wordsToSave = wordsToSave.map(w => w.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g, "").trim()).filter(Boolean);
+    }
+
+    const computedQuestion = isSpellingTopic
+      ? (newQuestion.trim() || `Bé hãy ráp chữ ghép vần để có từ: ${newSpellingFormula.split('=').pop()?.trim() || newSpellingFormula.trim()}`)
+      : (newQuestion.trim() || undefined);
+
     const newItem: LessonItem = {
       id: `custom-lesson-${Date.now()}`,
-      sentence: newSentence.trim(),
-      question: newQuestion.trim() || undefined,
+      sentence: sentenceToSave,
+      lessonName: newLessonName.trim() || `Lesson ${activeTopic.items.length + 1}`,
+      question: computedQuestion,
       type: 'sentence',
       topic: selectedTopicId,
-      scrambledWords: finalWords,
-      difficulty: newDifficulty,
+      scrambledWords: wordsToSave,
+      difficulty: isSpellingTopic ? 'dễ' : newDifficulty,
       emoji: newEmoji.trim(),
-      guideVoiceText: newSentence.trim(),
+      guideVoiceText: sentenceToSave,
       funFact: newFunFact.trim() || undefined,
-      phoneticsGuide: newPhoneticsGuide.trim() || undefined
+      phoneticsGuide: newPhoneticsGuide.trim() || undefined,
+      customImage: newCustomImage || undefined,
+      customAudio: newCustomAudio || undefined,
+      audioHotspots: newLessonHotspots.length > 0 ? newLessonHotspots : undefined
     };
 
     // Update custom topics
@@ -326,15 +753,37 @@ export default function TeacherPortal({
     });
 
     onSaveTopics(updatedTopics);
+
+    // If custom media was loaded during creation, save it as overrides too
+    if (newCustomImage || newCustomAudio || newLessonHotspots.length > 0) {
+      const updatedOver = {
+        ...localOverrides,
+        [newItem.id]: {
+          customImage: newCustomImage || undefined,
+          customAudio: newCustomAudio || undefined,
+          audioHotspots: newLessonHotspots.length > 0 ? newLessonHotspots : undefined
+        }
+      };
+      setLocalOverrides(updatedOver);
+      onSaveOverrides(updatedOver);
+    }
     
     // Clear form
     setNewSentence('');
+    setNewSpellingFormula('');
     setNewQuestion('');
     setNewDifficulty('dễ');
     setScrambledWordsInput('');
     setNewEmoji('🎒');
     setNewFunFact('');
     setNewPhoneticsGuide('');
+    setNewCustomImage('');
+    setNewCustomAudio('');
+    setNewCustomImageName('');
+    setNewCustomAudioName('');
+    setNewLessonHotspots([]);
+    setSelectedNewHotspotId(null);
+    setNewCustomAudioName('');
 
     playSoundEffect('success');
     alert("🎉 Đã thêm bài học mới thành công!");
@@ -417,193 +866,1502 @@ export default function TeacherPortal({
           </div>
         </div>
 
-        {/* Topic Navigator Tabstrip */}
-        <div className="mb-8">
-          <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-3">
-            1. Chọn chủ đề giáo án cần chỉnh sửa:
-          </label>
-          <div className="flex flex-wrap gap-2">
-            {topics.map(topic => {
-              const countCustomized = topic.items.filter(item => 
-                localOverrides[item.id]?.customImage || localOverrides[item.id]?.customAudio
-              ).length;
+        {/* Navigation Tab Ribbon (4 Mục) */}
+        <div className="flex flex-wrap p-1.5 bg-slate-100 rounded-[24px] border-2 border-slate-200/60 font-sans gap-1 mb-8 shadow-inner">
+          <button
+            onClick={() => {
+              playSoundEffect('click');
+              setActivePortalTab('sentence');
+              setIsCreatingTopic(false);
+              setIsCreatingSpelling(false);
+              setIsCreatingMathTopic(false);
+            }}
+            className={`flex-1 min-w-[120px] py-3 text-xs font-black rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer outline-none ${
+              activePortalTab === 'sentence'
+                ? 'bg-indigo-600 text-white shadow-md border-b-2 border-indigo-800'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+            }`}
+          >
+            <span className="text-sm">💬</span>
+            <span className="uppercase">1. Ghép câu</span>
+          </button>
 
-              return (
-                <button
-                  key={topic.id}
-                  onClick={() => {
-                    playSoundEffect('click');
-                    setSelectedTopicId(topic.id);
-                  }}
-                  className={`px-4 py-2.5 rounded-2xl text-xs font-black flex items-center gap-1.5 transition-all border-b-4 cursor-pointer outline-none ${
-                    selectedTopicId === topic.id
-                      ? 'bg-indigo-600 text-white border-indigo-800'
-                      : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200 hover:text-slate-800'
-                  }`}
-                >
-                  <span className="text-lg">{topic.emoji}</span>
-                  <span>{topic.name}</span>
-                  {countCustomized > 0 && (
-                    <span className="bg-emerald-500 text-[10px] px-1.5 py-0.5 rounded-md font-black text-white shrink-0">
-                      +{countCustomized}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
+          <button
+            onClick={() => {
+              playSoundEffect('click');
+              setActivePortalTab('spelling');
+              setIsCreatingTopic(false);
+              setIsCreatingSpelling(false);
+              setIsCreatingMathTopic(false);
+            }}
+            className={`flex-1 min-w-[120px] py-3 text-xs font-black rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer outline-none ${
+              activePortalTab === 'spelling'
+                ? 'bg-orange-600 text-white shadow-md border-b-2 border-orange-800'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+            }`}
+          >
+            <span className="text-sm">🎒</span>
+            <span className="uppercase">2. Ghép từ</span>
+          </button>
+
+          <button
+            onClick={() => {
+              playSoundEffect('click');
+              setActivePortalTab('math');
+              setIsCreatingTopic(false);
+              setIsCreatingSpelling(false);
+              setIsCreatingMathTopic(false);
+            }}
+            className={`flex-1 min-w-[120px] py-3 text-xs font-black rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer outline-none ${
+              activePortalTab === 'math'
+                ? 'bg-teal-600 text-white shadow-md border-b-2 border-teal-800'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+            }`}
+          >
+            <span className="text-sm">🧮</span>
+            <span className="uppercase">3. Học Toán</span>
+          </button>
+
+          <button
+            onClick={() => {
+              playSoundEffect('click');
+              setActivePortalTab('cloud');
+              setIsCreatingTopic(false);
+              setIsCreatingSpelling(false);
+              setIsCreatingMathTopic(false);
+            }}
+            className={`flex-1 min-w-[120px] py-3 text-xs font-black rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer outline-none ${
+              activePortalTab === 'cloud'
+                ? 'bg-amber-500 text-white shadow-md border-b-2 border-amber-700'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+            }`}
+          >
+            <Cloud className="w-4 h-4" />
+            <span className="uppercase">4. Đồng bộ Đám mây</span>
+          </button>
         </div>
 
-        {/* Thêm bài học mới block */}
-        {activeTopic && (
-          <div className="mb-10 bg-indigo-50/40 border-2 border-indigo-100 rounded-[32px] p-6">
-            <h4 className="text-xs font-black text-indigo-950 uppercase tracking-widest flex items-center gap-2 mb-4 font-sans">
-              <Sparkles className="w-4 h-4 text-indigo-600 animate-pulse" />
-              <span>Thêm Bài Học Mới Vào Chủ Đề "{activeTopic.name}"</span>
-            </h4>
+        {/* Topic Navigator Tabstrip */}
+        {activePortalTab !== 'cloud' && (
+          <div className="mb-8">
+            <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-3 font-sans">
+              1. Chọn chủ đề {activePortalTab === 'sentence' ? 'ghép câu' : activePortalTab === 'spelling' ? 'ghép từ / đánh vần' : 'toán'} cần chỉnh sửa:
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {topics
+                .filter(topic => {
+                  if (activePortalTab === 'sentence') return !topic.isSpelling && topic.id !== 'danh-van' && !topic.isMath && topic.id !== 'toan';
+                  if (activePortalTab === 'spelling') return topic.isSpelling || topic.id === 'danh-van';
+                  if (activePortalTab === 'math') return topic.isMath || topic.id === 'toan';
+                  return false;
+                })
+                .map(topic => {
+                  const countCustomized = topic.items.filter(item => 
+                    localOverrides[item.id]?.customImage || localOverrides[item.id]?.customAudio
+                  ).length;
 
-            <form onSubmit={handleAddNewLessonSubmit} className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
-                <div className="md:col-span-3">
-                  <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">
-                    Câu chuẩn tiếng Việt (nhập câu chuẩn, ví dụ: "Bé đi học"): *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={newSentence}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setNewSentence(val);
-                      // Pre-populate scrambled words by splitting on space & strip punctuation
-                      const cleanWords = val.replace(/[.,?/#!$%^&*;:{}=\-_`~()]/g, "")
-                        .split(/\s+/)
-                        .filter(Boolean);
-                      setScrambledWordsInput(cleanWords.join(', '));
-                    }}
-                    placeholder="Ví dụ: Con yêu bố mẹ nhiều"
-                    className="w-full text-xs font-bold text-slate-800 bg-white border border-slate-250 focus:border-indigo-400 p-3 rounded-xl outline-none transition-all placeholder:text-slate-400 font-sans"
-                  />
+                  return (
+                    <button
+                      key={topic.id}
+                      onClick={() => {
+                        playSoundEffect('click');
+                        setSelectedTopicId(topic.id);
+                        setIsCreatingTopic(false);
+                        setIsCreatingSpelling(false);
+                        setIsCreatingMathTopic(false);
+                      }}
+                      className={`px-4 py-2.5 rounded-2xl text-xs font-black flex items-center gap-1.5 transition-all border-b-4 cursor-pointer outline-none ${
+                        selectedTopicId === topic.id
+                          ? activePortalTab === 'sentence' ? 'bg-indigo-600 text-white border-indigo-800' :
+                            activePortalTab === 'spelling' ? 'bg-orange-600 text-white border-orange-850' :
+                            'bg-teal-600 text-white border-teal-850'
+                          : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200 hover:text-slate-800'
+                      }`}
+                    >
+                      {topic.emoji && (topic.emoji.startsWith('http://') || topic.emoji.startsWith('https://') || topic.emoji.startsWith('/') || topic.emoji.startsWith('data:')) ? (
+                        <img src={topic.emoji} className="w-5 h-5 object-contain rounded-sm inline-block shrink-0" alt="" referrerPolicy="no-referrer" />
+                      ) : (
+                        <span className="text-base">{topic.emoji}</span>
+                      )}
+                      <span>{topic.name}</span>
+                      {countCustomized > 0 && (
+                        <span className="bg-emerald-500 text-[10px] px-1.5 py-0.5 rounded-md font-black text-white shrink-0">
+                          +{countCustomized}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+            </div>
+
+          <div className="mt-4 flex flex-wrap gap-3 justify-end">
+            {activePortalTab === 'sentence' && (
+              <button
+                onClick={() => {
+                  playSoundEffect('click');
+                  const nextState = !isCreatingTopic;
+                  setIsCreatingTopic(nextState);
+                  setIsCreatingSpelling(false);
+                  setIsCreatingMathTopic(false);
+                  setNewTopicType('sentence');
+                  setNewTopicEmoji('💬');
+                  setActivePortalTab('sentence');
+                }}
+                className={`px-4 py-2.5 rounded-2xl text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer outline-none ${
+                  isCreatingTopic 
+                    ? 'bg-indigo-600 border-indigo-800 border-b-4 text-white' 
+                    : 'bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white border-b-4 border-b-indigo-800'
+                }`}
+              >
+                <PlusCircle className="w-4 h-4" />
+                <span>+ TẠO BÀI GHÉP CÂU / CHỦ ĐỀ MỚI</span>
+              </button>
+            )}
+
+            {activePortalTab === 'spelling' && (
+              <button
+                onClick={() => {
+                  playSoundEffect('click');
+                  const nextState = !isCreatingSpelling;
+                  setIsCreatingSpelling(nextState);
+                  setIsCreatingTopic(false);
+                  setIsCreatingMathTopic(false);
+                  setNewTopicType('spelling');
+                  setNewTopicEmoji('🎒');
+                  setActivePortalTab('spelling');
+                }}
+                className={`px-4 py-2.5 rounded-2xl text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer outline-none ${
+                  isCreatingSpelling 
+                    ? 'bg-orange-600 border-orange-850 border-b-4 text-white' 
+                    : 'bg-gradient-to-r from-orange-400 to-orange-550 hover:from-orange-500 hover:to-orange-600 text-white border-b-4 border-b-orange-850'
+                }`}
+              >
+                <PlusCircle className="w-4 h-4" />
+                <span>+ TẠO BÀI TẬP ĐÁNH VẦN MỚI</span>
+              </button>
+            )}
+
+            {activePortalTab === 'math' && (
+              <button
+                onClick={() => {
+                  playSoundEffect('click');
+                  const nextState = !isCreatingMathTopic;
+                  setIsCreatingMathTopic(nextState);
+                  setIsCreatingTopic(false);
+                  setIsCreatingSpelling(false);
+                  setNewTopicType('math');
+                  setNewTopicEmoji('🔢');
+                  setActivePortalTab('math');
+                }}
+                className={`px-4 py-2.5 rounded-2xl text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer outline-none ${
+                  isCreatingMathTopic 
+                    ? 'bg-teal-600 border-teal-800 border-b-4 text-white' 
+                    : 'bg-gradient-to-r from-teal-500 to-teal-600 hover:from-teal-600 hover:to-teal-700 text-white border-b-4 border-b-teal-850'
+                }`}
+              >
+                <PlusCircle className="w-4 h-4" />
+                <span>+ TẠO BÀI TẬP TOÁN MỚI</span>
+              </button>
+            )}
+          </div>
+        </div>
+        )}
+
+        {/* NEW TOPIC CREATION PANE - SENTENCE MATCHING */}
+        {isCreatingTopic && (
+          <div className="mb-8 p-6 bg-gradient-to-r from-indigo-50/70 to-indigo-100/40 border-2 border-indigo-200 rounded-[28px] space-y-4 animate-fade-in shadow-xs">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="text-sm font-black text-indigo-950 uppercase tracking-wider flex items-center gap-1.5 font-sans">
+                  <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
+                  <span>💬 Tạo Chủ Đề Học Ghép Câu Mới</span>
+                </h4>
+                <p className="text-[10px] text-indigo-800 font-extrabold mt-0.5 uppercase tracking-wider">
+                  Tự tay soạn các chủ đề giao tiếp, thế giới quan để con rèn phản xạ ghép câu đầy đủ!
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  playSoundEffect('pop');
+                  setIsCreatingTopic(false);
+                }}
+                className="text-xs font-black text-indigo-800 hover:text-indigo-950 px-2.5 py-1.5 rounded-xl border border-indigo-200 hover:bg-indigo-100/50 cursor-pointer"
+              >
+                Đóng ✕
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+              <div className="md:col-span-6">
+                <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">
+                  Tên chủ đề ghép câu mới: *
+                </label>
+                <input
+                  type="text"
+                  value={newTopicName}
+                  onChange={(e) => setNewTopicName(e.target.value)}
+                  className="w-full text-xs font-bold text-slate-800 bg-white border border-slate-200 focus:border-indigo-400 p-2.5 rounded-xl outline-none font-sans"
+                  placeholder="Ví dụ: Hoa quả bé thích, Chào hỏi lễ phép..."
+                />
+              </div>
+
+              <div className="md:col-span-4">
+                <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">
+                  Biểu tượng Emoji hoặc Link Icon:
+                </label>
+                <input
+                  type="text"
+                  value={newTopicEmoji}
+                  onChange={(e) => setNewTopicEmoji(e.target.value)}
+                  className="w-full text-xs font-bold text-slate-800 bg-white border border-indigo-200 focus:border-indigo-400 p-2.5 rounded-xl outline-none"
+                  placeholder="Nhập Emoji hoặc link ảnh biểu tượng..."
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewTopicType('sentence');
+                    setTimeout(() => {
+                      handleCreateNewTopic();
+                    }, 50);
+                  }}
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs py-3 rounded-xl border-b-4 border-b-indigo-800 transition-all flex items-center justify-center gap-1 cursor-pointer outline-none"
+                >
+                  <Check className="w-4 h-4 stroke-[2.5]" />
+                  <span>XÁC NHẬN</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* NEW TOPIC CREATION PANE - SPELLING LESSON */}
+        {isCreatingSpelling && (
+          <div className="mb-8 p-6 bg-gradient-to-r from-orange-50/70 to-orange-100/40 border-2 border-orange-200 rounded-[28px] space-y-4 animate-fade-in shadow-xs">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="text-sm font-black text-orange-950 uppercase tracking-wider flex items-center gap-1.5 font-sans">
+                  <Sparkles className="w-4 h-4 text-orange-600 shrink-0" />
+                  <span>🎒 Tạo Bài Học Đánh Vần Chữ Cái Mới</span>
+                </h4>
+                <p className="text-[10px] text-orange-850 font-extrabold mt-0.5 uppercase tracking-wider">
+                  Cập nhật các bài học ghép vần (Ví dụ: vần a, ô, e) kết hợp thanh dấu cho bé đọc trơn!
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  playSoundEffect('pop');
+                  setIsCreatingSpelling(false);
+                }}
+                className="text-xs font-black text-orange-850 hover:text-orange-950 px-2.5 py-1.5 rounded-xl border border-orange-200 hover:bg-orange-100/50 cursor-pointer"
+              >
+                Đóng ✕
+              </button>
+            </div>
+
+             <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+               <div className="md:col-span-10">
+                 <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">
+                   Tên bài học đánh vần mới: *
+                 </label>
+                 <input
+                   type="text"
+                   value={newTopicName}
+                   onChange={(e) => setNewTopicName(e.target.value)}
+                   className="w-full text-xs font-bold text-slate-800 bg-white border border-slate-200 focus:border-orange-400 p-2.5 rounded-xl outline-none font-sans"
+                   placeholder="Ví dụ: Bé ghép vần Bê, Bé rèn âm O..."
+                 />
+               </div>
+ 
+               <div className="md:col-span-2">
+                 <button
+                   type="button"
+                   onClick={() => {
+                     setNewTopicType('spelling');
+                     setNewTopicEmoji('🎒');
+                     setTimeout(() => {
+                       handleCreateNewTopic();
+                     }, 50);
+                   }}
+                   className="w-full bg-orange-600 hover:bg-orange-700 text-white font-black text-xs py-3 rounded-xl border-b-4 border-b-orange-800 transition-all flex items-center justify-center gap-1 cursor-pointer outline-none"
+                 >
+                   <Check className="w-4 h-4 stroke-[2.5]" />
+                   <span>XÁC NHẬN</span>
+                 </button>
+               </div>
+             </div>
+          </div>
+        )}
+
+        {/* NEW TOPIC CREATION PANE - MATH LESSON */}
+        {isCreatingMathTopic && (
+          <div className="mb-8 p-6 bg-gradient-to-r from-teal-50/70 to-teal-100/40 border-2 border-teal-200 rounded-[28px] space-y-4 animate-fade-in shadow-xs">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="text-sm font-black text-teal-950 uppercase tracking-wider flex items-center gap-1.5 font-sans">
+                  <Sparkles className="w-4 h-4 text-teal-600 shrink-0" />
+                  <span>🔢 Tạo Bài Tập Toán Mới cho Bé</span>
+                </h4>
+                <p className="text-[10px] text-teal-850 font-extrabold mt-0.5 uppercase tracking-wider">
+                  Tạo các bài toán đơn giản (cộng, trừ, nhân, chia) rèn luyện tư duy cho bé nhé!
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  playSoundEffect('pop');
+                  setIsCreatingMathTopic(false);
+                }}
+                className="text-xs font-black text-teal-800 hover:text-teal-950 px-2.5 py-1.5 rounded-xl border border-teal-200 hover:bg-teal-100/50 cursor-pointer"
+              >
+                Đóng ✕
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+              <div className="md:col-span-10">
+                <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">
+                  Tên chủ đề bài tập toán mới: *
+                </label>
+                <input
+                  type="text"
+                  value={newTopicName}
+                  onChange={(e) => setNewTopicName(e.target.value)}
+                  className="w-full text-xs font-bold text-slate-800 bg-white border border-slate-200 focus:border-teal-400 p-2.5 rounded-xl outline-none font-sans"
+                  placeholder="Ví dụ: Bé học phép cộng phạm vi 10, Tập làm quen số đếm..."
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewTopicType('math');
+                    setNewTopicEmoji('🔢');
+                    setTimeout(() => {
+                      handleCreateNewTopic();
+                    }, 50);
+                  }}
+                  className="w-full bg-teal-600 hover:bg-teal-700 text-white font-black text-xs py-3 rounded-xl border-b-4 border-b-teal-800 transition-all flex items-center justify-center gap-1 cursor-pointer outline-none"
+                >
+                  <Check className="w-4 h-4 stroke-[2.5]" />
+                  <span>XÁC NHẬN</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* CLOUD DB SYNCHRONIZATION WORKSPACE */}
+        {activePortalTab === 'cloud' && (
+          <div className="space-y-6 animate-fade-in font-sans">
+            <div className="bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-200 rounded-[32px] p-6 md:p-8 space-y-6 shadow-xs">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-amber-100 pb-5">
+                <div>
+                  <h3 className="text-lg font-black text-amber-950 uppercase tracking-tight flex items-center gap-2">
+                    <Cloud className="w-5 h-5 text-amber-600 animate-pulse" />
+                    <span>HỆ THỐNG ĐỒNG BỘ CƠ SỞ DỮ LIỆU ĐÁM MÂY</span>
+                  </h3>
+                  <p className="text-xs text-amber-900 font-medium mt-1">
+                    Lưu trữ tất cả tiến độ học tập, tùy chỉnh giáo án và thư viện toán học của bé trực tuyến thay vì bộ nhớ tạm (Local Storage).
+                  </p>
                 </div>
-
-                <div className="md:col-span-3">
-                  <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">
-                    Câu hỏi khơi gợi của cô giáo (tùy chọn):
-                  </label>
-                  <input
-                    type="text"
-                    value={newQuestion}
-                    onChange={(e) => setNewQuestion(e.target.value)}
-                    placeholder="Ví dụ: Con yêu ai nhất nhà nhỉ?"
-                    className="w-full text-xs font-bold text-slate-800 bg-white border border-slate-250 focus:border-indigo-400 p-3 rounded-xl outline-none transition-all placeholder:text-slate-400 font-sans"
-                  />
+                <div className="flex items-center gap-2 self-start md:self-center">
+                  <span className="flex h-2.5 w-2.5 relative">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                  </span>
+                  <span className="bg-emerald-50 text-emerald-800 border border-emerald-250 text-[10px] font-black px-3 py-1 rounded-full uppercase">
+                    Đã Kết Nối Cloud Database
+                  </span>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                <div className="md:col-span-3">
-                  <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">
-                    Độ khó:
-                  </label>
-                  <select
-                    value={newDifficulty}
-                    onChange={(e: any) => setNewDifficulty(e.target.value)}
-                    className="w-full text-xs font-bold text-slate-800 bg-white border border-slate-250 focus:border-indigo-400 p-3 rounded-xl outline-none transition-all cursor-pointer font-sans"
-                  >
-                    <option value="dễ">Dễ (3-4 chữ)</option>
-                    <option value="trung bình">Trung bình (4-5 chữ)</option>
-                    <option value="khó">Khó (trên 6 chữ)</option>
-                  </select>
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+                
+                {/* Left Panel: Current key status and copying */}
+                <div className="md:col-span-6 bg-white border border-amber-200/60 rounded-2xl p-5 space-y-4 shadow-sm flex flex-col justify-between">
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-1.5 text-xs font-black text-slate-700 uppercase tracking-wider">
+                      <Database className="w-4 h-4 text-amber-600" />
+                      <span>Mã Đồng Bộ Thiết Bị Hiện Tại</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-relaxed font-sans">
+                      Dùng mã này trên các thiết bị khác (điện thoại, iPad) để đồng bộ chung một giáo trình học tập của con!
+                    </p>
+                    
+                    {/* The sync key badge */}
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex items-center justify-between gap-3 font-mono">
+                      <span className="text-xl font-black text-slate-800 tracking-widest">{syncKey}</span>
+                      <button
+                        onClick={() => {
+                          const cleanKey = syncKey.replace(/[^\w-]/g, '');
+                          navigator.clipboard.writeText(cleanKey);
+                          setCopyFeedback(true);
+                          playSoundEffect('success');
+                          setTimeout(() => setCopyFeedback(false), 2000);
+                        }}
+                        className="bg-amber-100 hover:bg-amber-200 text-amber-850 border border-amber-200 p-2 rounded-lg cursor-pointer transition-all flex items-center gap-1 text-[10px] font-black uppercase outline-none"
+                        title="Sao chép"
+                      >
+                        {copyFeedback ? <Check className="w-3.5 h-3.5 stroke-[3]" /> : <Copy className="w-3.5 h-3.5" />}
+                        <span>{copyFeedback ? "Đã chép" : "Sao chép"}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400 font-medium mt-3">
+                    <span>Trạng thái đồng bộ:</span>
+                    <span className="font-bold flex items-center gap-1">
+                      {syncStatus === 'syncing' && <span className="text-amber-600 animate-spin">⏳ Đang đồng bộ...</span>}
+                      {syncStatus === 'synced' && <span className="text-emerald-600">✨ Đã lưu đám mây</span>}
+                      {syncStatus === 'idle' && <span className="text-slate-500">🟢 Sẵn sàng</span>}
+                      {syncStatus === 'error' && <span className="text-rose-500">❌ Lỗi kết nối</span>}
+                    </span>
+                  </div>
                 </div>
 
-                <div className="md:col-span-6">
-                  <label className="block text-[10px] font-black text-slate-500 uppercase mb-1 flex items-center justify-between">
-                    <span>Mảnh từ ghép (ngăn cách bằng dấu phẩy): *</span>
-                    <span className="text-[9px] text-indigo-500 font-black lowercase italic">Mặc định phân tích theo chữ</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={scrambledWordsInput}
-                    onChange={(e) => setScrambledWordsInput(e.target.value)}
-                    placeholder="Con, yêu, bố mẹ, nhiều"
-                    className="w-full text-xs font-bold text-slate-800 bg-white border border-slate-250 focus:border-indigo-400 p-3 rounded-xl outline-none transition-all placeholder:text-slate-400 font-sans"
-                  />
-                </div>
+                {/* Right Panel: Enter and pull different device database key */}
+                <div className="md:col-span-6 bg-white border border-amber-200/60 rounded-2xl p-5 space-y-4 shadow-sm">
+                  <div className="flex items-center gap-1.5 text-xs font-black text-slate-700 uppercase tracking-wider">
+                    <span>📥 Kết Nối Thiết Bị Khác / Nhập Mã Mới</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-relaxed font-sans">
+                    Nhập mã đồng bộ từ dòng điện thoại / máy tính khác để tải xuống toàn bộ dữ liệu tiến độ, sao lưu của thiết bị đó về máy này.
+                  </p>
 
-                <div className="md:col-span-3">
-                  <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">
-                    Mã hình Emoji: *
-                  </label>
-                  <div className="flex gap-2 items-center">
+                  <div className="space-y-3">
                     <input
                       type="text"
-                      required
-                      value={newEmoji}
-                      onChange={(e) => setNewEmoji(e.target.value)}
-                      placeholder="🎒"
-                      className="w-12 text-center text-sm font-bold text-slate-800 bg-white border border-slate-250 focus:border-indigo-400 p-2 rounded-xl outline-none transition-all"
+                      value={editingSyncKey}
+                      onChange={(e) => setEditingSyncKey(e.target.value.toUpperCase().trim())}
+                      placeholder="Ví dụ: V_XYZ123"
+                      className="w-full text-base font-bold bg-slate-50 border border-slate-200 focus:bg-white focus:border-amber-400 p-3 rounded-xl outline-none font-mono tracking-widest text-[#2C3E50]"
                     />
-                    <div className="flex flex-wrap gap-1 max-w-[124px]">
-                      {['🎒', '🏡', '🍰', '🚗', '🐱', '🍎', '🌟', '🍼'].map(em => (
-                        <button
-                          key={em}
-                          type="button"
-                          onClick={() => {
-                            playSoundEffect('pop');
-                            setNewEmoji(em);
-                          }}
-                          className={`w-6 h-6 text-xs flex items-center justify-center rounded-lg hover:bg-slate-200 cursor-pointer transition-all ${newEmoji === em ? 'bg-indigo-100 border border-indigo-400 scale-105' : ''}`}
-                        >
-                          {em}
-                        </button>
-                      ))}
-                    </div>
+
+                    <button
+                      onClick={() => {
+                        if (!editingSyncKey) {
+                          alert("Vui lòng nhập mã đồng bộ trước khi kích hoạt ba mẹ nhé!");
+                          return;
+                        }
+                        if (editingSyncKey.length < 4) {
+                          alert("Mã đồng bộ không hợp lệ! Vui lòng kiểm tra lại độ dài mã.");
+                          return;
+                        }
+                        const confirmLoad = window.confirm(
+                          `Cảnh báo: Ba mẹ đang đổi sang Mã Đồng Bộ "${editingSyncKey}".\nHệ thống sẽ tải toàn bộ giáo trình, điểm số của mã này từ Cloud! Xác nhận chuyển đổi?`
+                        );
+                        if (confirmLoad) {
+                          playSoundEffect('success');
+                          const success = onUpdateSyncKey(editingSyncKey);
+                          if (success) {
+                            setEditingSyncKey('');
+                            alert(`Kết nối thành công! Đã chuyển đổi sang cơ sở dữ liệu của thiết bị "${editingSyncKey}"!`);
+                          } else {
+                            alert("Có lỗi xảy ra khi cập nhật. Ba mẹ hãy thử lại nhé.");
+                          }
+                        }
+                      }}
+                      className="w-full bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-black text-xs py-3.5 rounded-xl border-b-4 border-b-amber-700 hover:border-b-amber-800 transition-all flex items-center justify-center gap-1.5 cursor-pointer outline-none"
+                    >
+                      <span>📥 KẾT NỐI & TẢI TRÌNH HỌC TẬP</span>
+                    </button>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Tips for parents / teacher */}
+              <div className="bg-amber-100/40 border border-amber-200/50 p-4 rounded-2xl text-xs text-amber-900 space-y-2 leading-relaxed">
+                <div className="font-bold flex items-center gap-1 text-[13px]">
+                  <span>💡 Hướng dẫn ba mẹ cách sử dụng thiết thực:</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1 font-sans">
+                  <div>
+                    <span className="font-extrabold text-amber-950">1. Soạn bài từ xa bằng Điện thoại:</span> Ba mẹ mở trang Cấu hình trên điện thoại, thêm các câu tiếng Việt và ảnh chụp con vật trực diện. Toàn bộ tiến trình sẽ tự động đẩy lên Cloud Firestore của thiết bị.
+                  </div>
+                  <div>
+                    <span className="font-extrabold text-amber-950">2. Em bé học mượt trên iPad:</span> Mở iPad, vào phần Đồng bộ này và bấm Nhập mã từ Điện thoại. iPad sẽ hiển thị tức thì các câu nói thân thương ba mẹ vừa soạn từ xa mà không cần chạm tay vào thiết bị của con!
                   </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
+            </div>
+          </div>
+        )}
+
+        {/* EDITING / MANAGEMENT PANELS - ENABLING DYNAMIC REVEALING */}
+        {(() => {
+          if (!activeTopic) return null;
+          const isSpellingTopic = !!(activeTopic.isSpelling || activeTopic.id === 'danh-van');
+          const isMathTopic = !!(activeTopic.isMath || activeTopic.id === 'toan');
+          const isSentenceTopic = !isSpellingTopic && !isMathTopic;
+
+          return (
+            <>
+              {/* OPTION: TOGGLE FUN FACT ("LỜI GẮM THÊM CHO BÉ") */}
+              {isSentenceTopic && (
+                <div className="mb-6 p-4 bg-indigo-50/50 border-2 border-indigo-200/50 rounded-3xl flex flex-col md:flex-row items-center justify-between gap-4">
+                  <div className="flex-1">
+                    <h4 className="text-xs font-black text-indigo-950 uppercase tracking-wider flex items-center gap-1.5 font-sans">
+                      <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
+                      <span>Hiển thị Lời gắm thêm / Sự thật thú vị cho bé (tùy chọn) 💡</span>
+                    </h4>
+                    <p className="text-[10px] text-indigo-800 font-extrabold mt-1">
+                      Bật hoặc tắt toàn bộ dòng gợi ý phụ (💡 Fun Fact) trong trò chơi sắp xếp ghép câu nói.
+                    </p>
+                  </div>
+                  <div className="shrink-0">
+                    <button
+                      onClick={() => {
+                        playSoundEffect('click');
+                        onToggleFunFact(!showFunFact);
+                      }}
+                      className={`px-4 py-2 rounded-xl text-xs font-black border-2 border-b-4 transition-all cursor-pointer outline-none ${
+                        showFunFact
+                          ? 'bg-emerald-500 hover:bg-emerald-600 text-white border-emerald-700'
+                          : 'bg-slate-200 hover:bg-slate-300 text-slate-600 border-slate-400 border-b-slate-550'
+                      }`}
+                    >
+                      {showFunFact ? 'ĐANG BẬT ✅' : 'ĐANG TẮT ❌'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+        {/* EDIT SELECTED TOPIC DETAIL */}
+        {activeTopic && (
+          <div className="mb-8 p-5 bg-[#FAFBFD] border-2 border-indigo-150/60 rounded-[28px] space-y-4 animate-fade-in animate-duration-300">
+            <div>
+              <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-1.5 font-sans">
+                <span>✏️ CHỈNH SỬA TÊN VÀ BIỂU TƯỢNG CHỦ ĐỀ SỐ {topics.indexOf(activeTopic) + 1}:</span>
+                <span className="text-indigo-600 lowercase font-extrabold">{activeTopic.name}</span>
+              </h4>
+              <p className="text-[10px] text-slate-400 font-extrabold mt-0.5 uppercase tracking-wide">
+                Ba mẹ có thể tự đặt lại tên mới hoàn toàn cho chủ đề này để phù hợp với giáo án riêng
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+              <div className="sm:col-span-6">
+                <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">
+                  Tên chủ đề tiếng Việt mới: *
+                </label>
+                <input
+                  type="text"
+                  value={topicNameInput}
+                  onChange={(e) => setTopicNameInput(e.target.value)}
+                  className="w-full text-xs font-bold text-slate-800 bg-white border border-slate-250 focus:border-indigo-400 p-2.5 rounded-xl outline-none transition-all font-sans"
+                  placeholder="Ví dụ: Đồ ăn khoái khẩu, Gia đình thân thương"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">
+                  Biểu tượng (Emoji/Link): *
+                </label>
+                <input
+                  type="text"
+                  value={topicEmojiInput}
+                  onChange={(e) => setTopicEmojiInput(e.target.value)}
+                  className="w-full text-center text-[10px] font-bold text-slate-800 bg-white border border-slate-250 focus:border-indigo-400 p-2 rounded-xl outline-none transition-all truncate"
+                  placeholder="Emoji hoặc link icon..."
+                />
+              </div>
+
+              <div className="sm:col-span-4 flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleRenameTopic}
+                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs py-3 rounded-xl border-b-4 border-b-emerald-800 transition-all flex items-center justify-center gap-1 cursor-pointer outline-none"
+                >
+                  <Check className="w-4 h-4 stroke-[2.5]" />
+                  <span>CẬP NHẬT TÊN</span>
+                </button>
+                
+                {!['dong-vat', 'do-an', 'do-choi', 'truong-hoc', 'ban-than', 'gia-dinh', 'danh-van'].includes(activeTopic.id) && (
+                  <button
+                    type="button"
+                    onClick={handleDeleteTopic}
+                    className="bg-rose-500 hover:bg-rose-600 text-white font-black text-xs px-4 py-3 rounded-xl border-b-4 border-b-rose-700 transition-all flex items-center justify-center gap-1.5 cursor-pointer outline-none"
+                    title="Xóa vĩnh viễn chủ đề này"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>XÓA</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MATH ILLUSTRATION LIBRARY COMPONENT */}
+        {activeTopic && isMathTopic && (
+          <div className="mb-10 bg-teal-50 border-4 border-teal-200 rounded-[32px] p-6 space-y-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-black text-teal-950 uppercase tracking-tight flex items-center gap-2 font-sans">
+                  <span>🎨 THƯ VIỆN HÌNH MINH HỌA TOÁN HỌC</span>
+                  <span className="text-[10px] bg-teal-200 text-teal-850 font-black px-2.5 py-0.5 rounded-full uppercase shrink-0">Chỉ dùng cho toán học</span>
+                </h3>
+                <p className="text-xs text-teal-850 font-medium mt-1 leading-relaxed">
+                  Thầy cô tải sẵn các hình đồ vật, hoa quả, đồ chơi cụ thể làm ảnh mẫu đếm số cho bé. Trò chơi toán học sẽ <strong>tự động bốc ngẫu nhiên & cam kết không bị lặp lại ảnh</strong> trong cùng một bài học nhé! 🧸🚀
+                </p>
+              </div>
+              <button
+                onClick={handleResetMathIllustrations}
+                className="self-start md:self-center text-[10px] font-black text-teal-800 hover:text-white bg-white hover:bg-teal-600 border border-teal-300 px-3.5 py-2 rounded-xl transition-all flex items-center gap-1 shrink-0"
+              >
+                <RefreshCw className="w-3 h-3" />
+                <span>NẠP LẠI PRESETS GỐC</span>
+              </button>
+            </div>
+
+            {/* List of current illustration library items */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
+              {mathIllustrations.map((illustrationItem) => (
+                <div key={illustrationItem.id} className="bg-white border-2 border-teal-150 hover:border-teal-400 rounded-2xl p-3 flex flex-col items-center justify-center relative shadow-3xs group transition-all">
+                  <div className="w-16 h-16 bg-slate-50 border border-slate-100 rounded-xl flex items-center justify-center p-1.5 overflow-hidden shrink-0 relative">
+                    <img
+                      src={illustrationItem.image}
+                      alt={illustrationItem.name}
+                      className="w-full h-full object-contain hover:scale-110 transition-transform"
+                      referrerPolicy="no-referrer"
+                    />
+                  </div>
+                  <span className="text-[11px] font-black text-slate-700 text-center mt-2 font-sans truncate w-full px-1">
+                    {illustrationItem.name}
+                  </span>
+                  
+                  {/* All items can be deleted */}
+                  <button
+                    onClick={() => handleDeleteMathImage(illustrationItem.id)}
+                    className="absolute -top-1.5 -right-1.5 bg-rose-500 hover:bg-rose-600 border-2 border-white text-white rounded-full w-6 h-6 flex items-center justify-center cursor-pointer shadow-sm opacity-90 hover:opacity-100 outline-none"
+                    title="Xóa hình này"
+                  >
+                    <Trash2 className="w-3 h-3 stroke-[2.5]" />
+                  </button>
+
+                  {illustrationItem.isPreset && (
+                    <span className="absolute bottom-1 right-1 text-[7px] font-black text-teal-650 bg-teal-50 border border-teal-150 px-1 py-0.2 rounded-md scale-95 uppercase leading-none select-none">
+                      Gốc
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Load new image manually box */}
+            <div className="bg-white/95 border-2 border-dashed border-teal-300 p-5 rounded-2xl space-y-4">
+              <h4 className="text-xs font-black text-teal-900 uppercase tracking-wider flex items-center gap-2">
+                <Upload className="w-4 h-4 text-teal-600" />
+                <span>CHỌN TẮT TIẾP HÌNH MỚI LÊN THỂ THAO:</span>
+              </h4>
+
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+                <div className="md:col-span-4">
                   <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">
-                    Lời thú vị/Lời gắm thêm cho bé (tùy chọn):
+                    1. Đặt tên hình minh họa (Ví dụ: "Quả khế", "Mèo con"): *
                   </label>
                   <input
                     type="text"
-                    value={newFunFact}
-                    onChange={(e) => setNewFunFact(e.target.value)}
-                    placeholder="Con là thiên thần nhỏ ngoan nhất đời của bố mẹ!"
-                    className="w-full text-xs font-bold text-slate-800 bg-white border border-slate-250 focus:border-indigo-400 p-3 rounded-xl outline-none transition-all"
+                    value={newMathImageName}
+                    onChange={(e) => setNewMathImageName(e.target.value)}
+                    placeholder="Tên đồ vật..."
+                    className="w-full text-xs font-bold text-slate-800 bg-white border border-slate-200 focus:border-teal-400 p-2.5 rounded-xl outline-none transition-all font-sans"
                   />
                 </div>
 
+                <div className="md:col-span-5">
+                  <label className="block text-[10px] font-black text-slate-500 uppercase mb-1 font-sans">
+                    2. Chọn tệp ảnh từ máy tính / điện thoại: *
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <label className="flex-1 bg-slate-50 hover:bg-slate-100 border border-slate-200 hover:border-slate-350 px-3 py-2.5 rounded-xl text-center text-xs font-black text-teal-850 cursor-pointer transition-all truncate">
+                      <span>{newMathImageRaw ? 'ĐÃ CHỌN 🟢 XĂNG SÀNG' : 'CHỌN FILE 📁'}</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleMathImageUpload}
+                        className="hidden"
+                      />
+                    </label>
+                    {newMathImageRaw && (
+                      <div className="w-10 h-10 border border-teal-200 bg-white rounded-lg p-1 overflow-hidden shrink-0">
+                        <img src={newMathImageRaw} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="md:col-span-3">
+                  <button
+                    type="button"
+                    disabled={!newMathImageRaw}
+                    onClick={handleSaveMathImage}
+                    className={`w-full font-black text-xs py-3 rounded-xl border-b-4 transition-all flex items-center justify-center gap-1.5 outline-none ${
+                      newMathImageRaw 
+                        ? 'bg-teal-600 hover:bg-teal-700 active:scale-95 text-white border-b-teal-800 hover:border-b-teal-900 cursor-pointer shadow-sm' 
+                        : 'bg-slate-100 text-slate-300 border-b-slate-200 cursor-not-allowed border-t border-r border-l'
+                    }`}
+                  >
+                    <Check className="w-4 h-4 stroke-[2.5]" />
+                    <span>NẠP VÀO THƯ VIỆN</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Thêm bài học mới block */}
+        {activeTopic && activePortalTab !== 'cloud' && (
+          <div className="mb-10 bg-indigo-50/40 border-2 border-indigo-100 rounded-[32px] p-6">
+            <h4 className="text-xs font-black text-indigo-950 uppercase tracking-widest flex items-center gap-2 mb-4 font-sans">
+              <Sparkles className="w-4 h-4 text-indigo-600 animate-pulse" />
+              <span>{isSpellingTopic ? "Thêm bài học mới" : `Thêm Bài Học Mới Vào Chủ Đề "${activeTopic.name}"`}</span>
+            </h4>
+
+            <form onSubmit={handleAddNewLessonSubmit} className="space-y-4">
+              <div className="grid grid-cols-1 gap-4">
                 <div>
-                  <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">
-                    Phiên âm phát âm chậm (tùy chọn):
+                  <label className="block text-[10px] font-black text-indigo-950 uppercase mb-1">
+                    {isSpellingTopic 
+                      ? "Tên bài học (Nhập thủ công): *" 
+                      : "Tên bài học (Mặc định hoặc chỉnh sửa): *"}
                   </label>
                   <input
                     type="text"
-                    value={newPhoneticsGuide}
-                    onChange={(e) => setNewPhoneticsGuide(e.target.value)}
-                    placeholder="con / yêu / bố / mẹ"
-                    className="w-full text-xs font-bold text-slate-800 bg-white border border-slate-250 focus:border-indigo-400 p-3 rounded-xl outline-none transition-all"
+                    required
+                    value={newLessonName}
+                    onChange={(e) => setNewLessonName(e.target.value)}
+                    placeholder={isSpellingTopic ? "Ví dụ: Bài học Ba, Vần bé..." : `Lesson ${activeTopic.items.length + 1}`}
+                    className="w-full text-xs font-bold text-slate-800 bg-white border border-slate-250 focus:border-indigo-400 p-3 rounded-xl outline-none transition-all placeholder:text-slate-400 font-sans"
                   />
                 </div>
               </div>
 
-              {scrambledWordsInput.trim() && (
-                <div className="bg-white border border-slate-200 rounded-2xl p-3 flex flex-wrap items-center gap-1.5 shadow-2xs">
-                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider mr-2 font-sans">Các khối từ bé sẽ xếp:</span>
-                  {scrambledWordsInput.split(',')
-                    .map(w => w.trim())
-                    .filter(Boolean)
-                    .map((word, i) => (
-                      <span key={i} className="text-[10px] font-black bg-indigo-50 border border-indigo-200 text-indigo-800 px-2.5 py-1 rounded-lg">
-                        {word}
-                      </span>
-                    ))
-                  }
+              {isMathTopic ? (
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                  <div className="md:col-span-6 font-sans">
+                    <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">
+                      Chọn phép tính: *
+                    </label>
+                    <select
+                      value={newMathOp}
+                      onChange={(e) => setNewMathOp(e.target.value as any)}
+                      className="w-full text-xs font-bold text-slate-800 bg-white border border-slate-250 focus:border-teal-400 p-3 rounded-xl outline-none transition-all font-sans"
+                    >
+                      <option value="+">Phép Cộng (+)</option>
+                      <option value="-">Phép Trừ (-)</option>
+                      <option value="*">Phép Nhân (*)</option>
+                      <option value="/">Phép Chia (/)</option>
+                    </select>
+                  </div>
+
+                  <div className="md:col-span-6 font-sans">
+                    <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">
+                      Mức độ khó (Phạm vi): *
+                    </label>
+                    <select
+                      value={newDifficulty}
+                      onChange={(e) => setNewDifficulty(e.target.value as any)}
+                      className="w-full text-xs font-bold text-slate-800 bg-white border border-slate-250 focus:border-teal-400 p-3 rounded-xl outline-none transition-all font-sans"
+                    >
+                      <option value="dễ">Dễ (Phạm vi 10)</option>
+                      <option value="trung bình">Trung bình (Phạm vi 50)</option>
+                      <option value="khó">Khó (Phạm vi 100)</option>
+                    </select>
+                  </div>
+
+                  {/* Chọn ảnh minh họa từ thư viện */}
+                  <div className="md:col-span-12 space-y-2">
+                    <label className="block text-[10px] font-black text-teal-950 uppercase mb-1 font-sans">
+                      🖼️ Chọn ảnh minh họa đếm số từ thư viện toán học: *
+                    </label>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 p-3 bg-teal-50/50 rounded-2xl border-2 border-teal-100 max-h-[220px] overflow-y-auto">
+                      {mathIllustrations.map((ill) => (
+                        <button
+                          key={ill.id}
+                          type="button"
+                          onClick={() => {
+                            playSoundEffect('click');
+                            setSelectedMathIllustrationId(ill.id);
+                          }}
+                          className={`p-2.5 rounded-xl border-2 bg-white flex flex-col items-center justify-center transition-all cursor-pointer outline-none ${
+                            selectedMathIllustrationId === ill.id
+                              ? 'border-teal-500 bg-teal-50 shadow-md ring-2 ring-teal-200'
+                              : 'border-slate-100 hover:border-slate-350'
+                          }`}
+                        >
+                          <img src={ill.image} className="w-10 h-10 object-contain" alt="" referrerPolicy="no-referrer" />
+                          <span className="text-[9px] font-extrabold text-slate-700 text-center truncate w-full mt-1.5">{ill.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-teal-850/80 italic font-sans">Hệ thống sẽ dùng ảnh minh hoạ bé vừa chọn để xây dựng 5 câu đố phép tính trực quan phía trên nhé!</p>
+                  </div>
                 </div>
+              ) : isSpellingTopic ? (
+                /* SPELLING-SPECIFIC FIELD */
+                <div className="grid grid-cols-1 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">
+                      Công thức đánh vần chữ cái mới (Nhập có dấu cách, ví dụ: "B + a = Ba"): *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={newSpellingFormula}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setNewSpellingFormula(val);
+                      }}
+                      placeholder="Ví dụ: B + a = Ba"
+                      className="w-full text-xs font-bold text-slate-800 bg-white border border-slate-250 focus:border-indigo-400 p-3 rounded-xl outline-none transition-all placeholder:text-slate-400 font-sans"
+                    />
+                  </div>
+                </div>
+              ) : (
+                /* SENTENCE-SPECIFIC ORIGINAL FIELDS */
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
+                    <div className="md:col-span-3">
+                      <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">
+                        Câu chuẩn tiếng Việt (nhập câu chuẩn, ví dụ: "Bé đi học"): *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={newSentence}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setNewSentence(val);
+                          // Pre-populate scrambled words by splitting on space & strip punctuation
+                          const cleanWords = val.replace(/[.,?/#!$%^&*;:{}=\-_`~()]/g, "")
+                            .split(/\s+/)
+                            .filter(Boolean);
+                          setScrambledWordsInput(cleanWords.join(', '));
+                        }}
+                        placeholder="Ví dụ: Con yêu bố mẹ nhiều"
+                        className="w-full text-xs font-bold text-slate-800 bg-white border border-slate-250 focus:border-indigo-400 p-3 rounded-xl outline-none transition-all placeholder:text-slate-400 font-sans"
+                      />
+                    </div>
+
+                    <div className="md:col-span-3">
+                      <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">
+                        Câu hỏi khơi gợi của cô giáo (tùy chọn):
+                      </label>
+                      <input
+                        type="text"
+                        value={newQuestion}
+                        onChange={(e) => setNewQuestion(e.target.value)}
+                        placeholder="Ví dụ: Con yêu ai nhất nhà nhỉ?"
+                        className="w-full text-xs font-bold text-slate-800 bg-white border border-slate-250 focus:border-indigo-400 p-3 rounded-xl outline-none transition-all placeholder:text-slate-400 font-sans"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                    <div className="md:col-span-4">
+                      <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">
+                        Độ khó:
+                      </label>
+                      <select
+                        value={newDifficulty}
+                        onChange={(e: any) => {
+                          const difficultyValue = e.target.value;
+                          setNewDifficulty(difficultyValue);
+                          if (newSentence.trim()) {
+                            const adjusted = adjustSentenceForDifficulty(newSentence, difficultyValue);
+                            setNewSentence(adjusted);
+                            const cleanWords = adjusted.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g, "")
+                              .split(/\s+/)
+                              .filter(Boolean);
+                            setScrambledWordsInput(cleanWords.join(', '));
+                          }
+                        }}
+                        className="w-full text-xs font-bold text-slate-800 bg-white border border-slate-250 focus:border-indigo-400 p-3 rounded-xl outline-none transition-all cursor-pointer font-sans"
+                      >
+                        <option value="dễ">Dễ (3-4 từ)</option>
+                        <option value="trung bình">Trung bình (5-7 chữ)</option>
+                        <option value="khó">Khó (trên 8 chữ)</option>
+                      </select>
+                    </div>
+
+                    <div className="md:col-span-8">
+                      <label className="block text-[10px] font-black text-slate-500 uppercase mb-1 flex items-center justify-between">
+                        <span>Mảnh từ ghép (ngăn cách bằng dấu phẩy): *</span>
+                        <span className="text-[9px] text-indigo-500 font-black lowercase italic">Mặc định phân tích theo chữ</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={scrambledWordsInput}
+                        onChange={(e) => setScrambledWordsInput(e.target.value)}
+                        placeholder="Con, yêu, bố mẹ, nhiều"
+                        className="w-full text-xs font-bold text-slate-800 bg-white border border-slate-250 focus:border-indigo-400 p-3 rounded-xl outline-none transition-all placeholder:text-slate-400 font-sans"
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* 📷 🎙️ MEDIA MANUAL LOADING (Hình ảnh minh họa & Cách phát âm MP3) */}
+              {!isMathTopic && (
+                <div className="p-4 bg-slate-50 border-2 border-indigo-100 rounded-[24px] space-y-4 shadow-3xs">
+                <span className="text-[10px] font-black text-slate-650 uppercase tracking-widest flex items-center gap-1">
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-505" />
+                  <span>CÀI ĐẶT HÌNH ẢNH & FILE PHÁT ÂM (Tùy chọn tải thủ công) 🎨 🎙️</span>
+                </span>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* 1. Illustration Image Manual Load */}
+                  <div className="p-3 bg-white border border-slate-200 rounded-2xl flex flex-col justify-between space-y-3">
+                    <div>
+                      <label className="block text-[10px] font-black text-sky-900 uppercase mb-1 flex items-center gap-1">
+                        <ImageIcon className="w-3.5 h-3.5 text-sky-505" />
+                        <span>Ảnh minh họa (.png, .jpg, hoặc dán URL):</span>
+                      </label>
+                      <p className="text-[8px] text-slate-400 font-bold mb-2">Thêm hình ảnh kích thích giác quan giúp bé nhận mặt chữ/âm</p>
+                    </div>
+
+                    {newCustomImage ? (
+                      <div className="p-2 bg-sky-50/40 border border-sky-100 rounded-xl flex items-center gap-3">
+                        <img 
+                          src={newCustomImage} 
+                          alt="Manual preview" 
+                          className="w-12 h-12 rounded-lg object-cover border border-white shadow-xs"
+                          referrerPolicy="no-referrer"
+                        />
+                        <div className="overflow-hidden flex-1 leading-tight">
+                          <span className="text-[8px] font-black text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded uppercase border border-emerald-100">
+                            Đã nạp thành công ✅
+                          </span>
+                          <p className="text-[9px] text-slate-550 truncate font-mono mt-1">{newCustomImageName || "Ảnh từ liên kết dán"}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            playSoundEffect('pop');
+                            setNewCustomImage('');
+                            setNewCustomImageName('');
+                          }}
+                          className="p-1.5 hover:bg-rose-500 text-slate-400 hover:text-white rounded-lg border border-transparent hover:border-rose-400 transition-all shrink-0 cursor-pointer"
+                          title="Xóa hình ảnh"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {/* Drag and Drop/Upload Container */}
+                        <div 
+                          onClick={() => {
+                            const inp = document.getElementById('creation-img-uploader');
+                            if (inp) inp.click();
+                          }}
+                          className="border-2 border-dashed border-slate-300 hover:border-sky-400 hover:bg-sky-50/30 p-2 rounded-xl text-center cursor-pointer transition-all flex flex-col items-center justify-center min-h-[56px]"
+                        >
+                          <Upload className="w-4 h-4 text-sky-400 mb-0.5" />
+                          <span className="text-[10px] font-black text-slate-600">Bấm tải ảnh lên</span>
+                          <span className="text-[7px] text-slate-400 font-extrabold uppercase">PNG, JPG dưới 1.5MB</span>
+                        </div>
+                        <input 
+                          id="creation-img-uploader"
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={async (e) => {
+                            if (e.target.files && e.target.files[0]) {
+                              const file = e.target.files[0];
+                              if (file.size > 1.5 * 1024 * 1024) {
+                                alert("Kích thước tệp lớn hơn 1.5 MB rồi ạ!");
+                                return;
+                              }
+                              try {
+                                const base64Str = await fileToBase64(file);
+                                setNewCustomImage(base64Str);
+                                setNewCustomImageName(file.name);
+                                playSoundEffect('success');
+                              } catch(err) {
+                                console.error(err);
+                              }
+                            }
+                          }}
+                        />
+                        
+                        {/* URL Paste */}
+                        <div className="relative">
+                          <input 
+                            type="text"
+                            value={newCustomImage}
+                            onChange={(e) => {
+                              setNewCustomImage(e.target.value);
+                              if (e.target.value && !e.target.value.startsWith('data:')) {
+                                setNewCustomImageName("Liên kết trực tuyến (URL)");
+                              } else if (!e.target.value) {
+                                setNewCustomImageName('');
+                              }
+                            }}
+                            placeholder="Hoặc dán link URL ảnh trực tuyến..."
+                            className="w-full text-[9px] font-bold text-slate-700 bg-slate-50 border border-slate-200 focus:border-sky-400 p-2 rounded-lg outline-none transition-all placeholder:text-slate-400"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 2. Audio Pronunciation Manual Load */}
+                  <div className="p-3 bg-white border border-slate-200 rounded-2xl flex flex-col justify-between space-y-3">
+                    <div>
+                      <label className="block text-[10px] font-black text-emerald-950 uppercase mb-1 flex items-center gap-1">
+                        <Music className="w-3.5 h-3.5 text-emerald-500" />
+                        <span>Giọng phát âm MP3 (.mp3, .wav, hoặc dán URL):</span>
+                      </label>
+                      <p className="text-[8px] text-slate-400 font-bold mb-2">Lời đọc chậm từng vần giúp con rèn thanh dấu chính xác</p>
+                    </div>
+
+                    {newCustomAudio ? (
+                      <div className="p-2 bg-emerald-50/40 border border-emerald-100 rounded-xl flex items-center justify-between gap-1.5">
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (creationAudPlayback && testAudioObj) {
+                                testAudioObj.pause();
+                                setCreationAudPlayback(false);
+                              } else {
+                                playSoundEffect('click');
+                                const audio = new Audio(newCustomAudio);
+                                setTestAudioObj(audio);
+                                setCreationAudPlayback(true);
+                                audio.onended = () => setCreationAudPlayback(false);
+                                audio.onerror = () => {
+                                  setCreationAudPlayback(false);
+                                  alert("Lỗi không thể phát tệp âm thanh này!");
+                                };
+                                audio.play().catch(e => {
+                                  console.error(e);
+                                  setCreationAudPlayback(false);
+                                });
+                              }
+                            }}
+                            className={`p-2 rounded-full text-white cursor-pointer transition-all ${
+                              creationAudPlayback ? 'bg-indigo-500 animate-pulse' : 'bg-emerald-555 hover:bg-emerald-600'
+                            }`}
+                            title={creationAudPlayback ? "Dừng" : "Phát thử"}
+                          >
+                            {creationAudPlayback ? <Square className="w-3.5 h-3.5 fill-white" /> : <Play className="w-3.5 h-3.5 fill-white" />}
+                          </button>
+                          <div className="overflow-hidden leading-tight">
+                            <span className="text-[8px] font-black text-emerald-800 bg-emerald-50 px-1 rounded uppercase">
+                              Sẵn sàng 🎙️
+                            </span>
+                            <p className="text-[9px] text-slate-500 truncate font-mono max-w-[124px] mt-0.5">{newCustomAudioName || "Âm dán từ liên kết"}</p>
+                          </div>
+                        </div>
+                        
+                        <button
+                          type="button"
+                          onClick={() => {
+                            playSoundEffect('pop');
+                            setNewCustomAudio('');
+                            setNewCustomAudioName('');
+                            if (creationAudPlayback && testAudioObj) {
+                              testAudioObj.pause();
+                              setCreationAudPlayback(false);
+                            }
+                          }}
+                          className="p-1.5 hover:bg-rose-500 text-slate-400 hover:text-white rounded-lg border border-transparent hover:border-rose-400 transition-all shrink-0 cursor-pointer"
+                          title="Xóa âm phát"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {/* Audio Upload Controller */}
+                        <div 
+                          onClick={() => {
+                            const inp = document.getElementById('creation-aud-uploader');
+                            if (inp) inp.click();
+                          }}
+                          className="border-2 border-dashed border-slate-300 hover:border-emerald-400 hover:bg-emerald-50/30 p-2 rounded-xl text-center cursor-pointer transition-all flex flex-col items-center justify-center min-h-[56px]"
+                        >
+                          <Upload className="w-4 h-4 text-emerald-400 mb-0.5" />
+                          <span className="text-[10px] font-black text-slate-655">Nhập file ghi âm hướng dẫn</span>
+                          <span className="text-[7px] text-slate-400 font-extrabold uppercase">MP3, M4A, WAV dưới 2MB</span>
+                        </div>
+                        <input 
+                          id="creation-aud-uploader"
+                          type="file"
+                          accept="audio/*"
+                          className="hidden"
+                          onChange={async (e) => {
+                            if (e.target.files && e.target.files[0]) {
+                              const file = e.target.files[0];
+                              if (file.size > 2 * 1024 * 1024) {
+                                alert("Tệp quá giới hạn 2 MB rồi!");
+                                return;
+                              }
+                              try {
+                                const base64Str = await fileToBase64(file);
+                                setNewCustomAudio(base64Str);
+                                setNewCustomAudioName(file.name);
+                                playSoundEffect('success');
+                              } catch(err) {
+                                console.error(err);
+                              }
+                            }
+                          }}
+                        />
+
+                        {/* Audio URL Paste */}
+                        <div className="relative">
+                          <input 
+                            type="text"
+                            value={newCustomAudio}
+                            onChange={(e) => {
+                              setNewCustomAudio(e.target.value);
+                              if (e.target.value && !e.target.value.startsWith('data:')) {
+                                setNewCustomAudioName("Liên kết trực tuyến (URL)");
+                              } else if (!e.target.value) {
+                                setNewCustomAudioName('');
+                              }
+                            }}
+                            placeholder="Hoặc dán URL âm thanh MP3..."
+                            className="w-full text-[9px] font-bold text-slate-700 bg-slate-50 border border-slate-200 focus:border-emerald-400 p-2 rounded-lg outline-none transition-all placeholder:text-slate-400"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* 🎯 SƠ ĐỒ ĐIỂM GÁN PHÁT ÂM CHI TIẾT */}
+                {newCustomImage && (
+                  <div className="mt-4 pt-4 border-t border-indigo-100 space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <span className="text-[11px] font-black text-indigo-950 uppercase tracking-wider flex items-center gap-1.5">
+                          <Sparkles className="w-4 h-4 text-amber-500" />
+                          <span>Thiết kế Sơ Đồ Phát Âm trên Ảnh ({newLessonHotspots.length} điểm) 📍</span>
+                        </span>
+                        <p className="text-[9px] text-slate-500 font-bold">
+                          Bấm trực tiếp vào ảnh để đặt điểm phát âm mới, hoặc chỉnh sửa tệp Mp3 cho từng điểm ghim dưới ảnh.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          playSoundEffect('click');
+                          const newHp: AudioHotspot = {
+                            id: `hp-${Date.now()}`,
+                            x: 50,
+                            y: 50,
+                          };
+                          setNewLessonHotspots([...newLessonHotspots, newHp]);
+                          setSelectedNewHotspotId(newHp.id);
+                        }}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] px-3 py-1.5 rounded-lg border-b-2 border-b-indigo-800 transition-all flex items-center gap-1 shrink-0 cursor-pointer"
+                      >
+                        <PlusCircle className="w-3.5 h-3.5" />
+                        <span>📍 GÁN THÊM ÂM THANH CHỮ</span>
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                      {/* Left: Interactive Canvas */}
+                      <div className="md:col-span-7 flex flex-col items-center justify-center bg-slate-900/5 p-2 rounded-2xl border border-slate-200">
+                        <div 
+                          className="relative max-w-full cursor-crosshair overflow-hidden rounded-xl border border-white shadow-md select-none bg-slate-900"
+                          onMouseMove={(e) => {
+                            if (!draggingHotspotId) return;
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            const x = ((e.clientX - rect.left) / rect.width) * 100;
+                            const y = ((e.clientY - rect.top) / rect.height) * 100;
+                            const clampedX = Math.max(0, Math.min(100, Math.round(x * 10) / 10));
+                            const clampedY = Math.max(0, Math.min(100, Math.round(y * 10) / 10));
+                            setNewLessonHotspots(prev => prev.map(h => {
+                              if (h.id === draggingHotspotId) {
+                                return { ...h, x: clampedX, y: clampedY };
+                              }
+                              return h;
+                            }));
+                          }}
+                          onTouchMove={(e) => {
+                            if (!draggingHotspotId) return;
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            const touch = e.touches[0];
+                            if (!touch) return;
+                            const x = ((touch.clientX - rect.left) / rect.width) * 100;
+                            const y = ((touch.clientY - rect.top) / rect.height) * 100;
+                            const clampedX = Math.max(0, Math.min(100, Math.round(x * 10) / 10));
+                            const clampedY = Math.max(0, Math.min(100, Math.round(y * 10) / 10));
+                            setNewLessonHotspots(prev => prev.map(h => {
+                              if (h.id === draggingHotspotId) {
+                                return { ...h, x: clampedX, y: clampedY };
+                              }
+                              return h;
+                            }));
+                          }}
+                          onMouseUp={() => setDraggingHotspotId(null)}
+                          onMouseLeave={() => setDraggingHotspotId(null)}
+                          onTouchEnd={() => setDraggingHotspotId(null)}
+                          onTouchCancel={() => setDraggingHotspotId(null)}
+                          onClick={(e) => {
+                            if (draggingHotspotId) {
+                              setDraggingHotspotId(null);
+                              return;
+                            }
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            const x = ((e.clientX - rect.left) / rect.width) * 100;
+                            const y = ((e.clientY - rect.top) / rect.height) * 100;
+                            const newHp: AudioHotspot = {
+                              id: `hp-${Date.now()}`,
+                              x: Math.round(x * 10) / 10,
+                              y: Math.round(y * 10) / 10
+                            };
+                            setNewLessonHotspots([...newLessonHotspots, newHp]);
+                            setSelectedNewHotspotId(newHp.id);
+                            playSoundEffect('pop');
+                          }}
+                        >
+                          <img 
+                            src={newCustomImage} 
+                            alt="Phần đặt điểm phát âm" 
+                            className="max-h-64 object-contain mx-auto select-none pointer-events-none opacity-90"
+                            referrerPolicy="no-referrer"
+                          />
+                          
+                          {newLessonHotspots.map((hp, index) => {
+                            const isSelected = selectedNewHotspotId === hp.id;
+                            const isDraggingThis = draggingHotspotId === hp.id;
+                            return (
+                              <button
+                                key={hp.id}
+                                type="button"
+                                style={{ left: `${hp.x}%`, top: `${hp.y}%` }}
+                                onMouseDown={(e) => {
+                                  e.stopPropagation();
+                                  setDraggingHotspotId(hp.id);
+                                  setSelectedNewHotspotId(hp.id);
+                                }}
+                                onTouchStart={(e) => {
+                                  e.stopPropagation();
+                                  setDraggingHotspotId(hp.id);
+                                  setSelectedNewHotspotId(hp.id);
+                                }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedNewHotspotId(hp.id);
+                                  playSoundEffect('click');
+                                  if (hp.audioData) {
+                                    const audio = new Audio(hp.audioData);
+                                    audio.play().catch(er => console.error(er));
+                                  }
+                                }}
+                                className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-full p-2 text-white shadow-lg flex items-center justify-center transition-all ${
+                                  isDraggingThis ? 'cursor-grabbing scale-135 ring-4 ring-amber-400 z-40 bg-amber-400' :
+                                  isSelected 
+                                    ? 'bg-amber-500 scale-125 ring-4 ring-amber-300 z-30 cursor-grab'
+                                    : 'bg-indigo-600 hover:bg-indigo-500 scale-100 z-20 cursor-grab'
+                                } border-2 border-white`}
+                                title={`Ghim ${index + 1}: ${hp.audioName || "Chất nạp âm thanh"}`}
+                              >
+                                <Volume2 className="w-3.5 h-3.5 text-white" />
+                                <span className="absolute -bottom-5 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[8px] font-black px-1 rounded whitespace-nowrap shadow-xs">
+                                  {isSpellingTopic ? `Loa ${index + 1}` : `Nút ${index + 1}`}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <span className="text-[8px] font-bold text-slate-400 mt-2 uppercase">💡 Mẹo: Nhấn trực tiếp lên ảnh để ghim; nhấp nốt loa để nghe thử</span>
+                      </div>
+
+                      {/* Right: selected hotspot details */}
+                      <div className="md:col-span-5 flex flex-col justify-between p-3.5 bg-white border border-slate-200 rounded-2xl min-h-[180px]">
+                        {selectedNewHotspotId ? (() => {
+                          const activeHpIndex = newLessonHotspots.findIndex(h => h.id === selectedNewHotspotId);
+                          const activeHp = newLessonHotspots[activeHpIndex];
+                          if (!activeHp) return <div className="text-center font-bold text-slate-400 text-[10px] my-auto">Vui lòng chọn hoặc gán điểm ghim</div>;
+                          
+                          return (
+                            <div className="space-y-3 flex-1 flex flex-col justify-between">
+                              <div>
+                                <div className="flex items-center justify-between border-b pb-1.5">
+                                  <span className="text-[10px] font-black text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-100">
+                                    ⚙️ CÀI ĐẶT NÚT ÂM THANH SỐ {activeHpIndex + 1}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      playSoundEffect('pop');
+                                      setNewLessonHotspots(prev => prev.filter(h => h.id !== selectedNewHotspotId));
+                                      setSelectedNewHotspotId(null);
+                                    }}
+                                    className="p-1 hover:bg-rose-50 hover:text-rose-600 text-slate-400 rounded-md transition-all"
+                                    title="Xóa điểm ghim này"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                                <p className="text-[8px] text-slate-400 font-bold mt-1 uppercase">Tọa độ: X: {activeHp.x}%, Y: {activeHp.y}%</p>
+                              </div>
+
+                              <div className="space-y-2 bg-slate-50/50 p-2.5 rounded-xl border border-slate-100">
+                                <label className="block text-[9px] font-black text-slate-650 uppercase">
+                                  🎤 Nạp file phát âm cho ĐIỂM {activeHpIndex + 1}:
+                                </label>
+                                
+                                {activeHp.audioData ? (
+                                  <div className="flex items-center justify-between gap-2 p-1.5 bg-emerald-50 border border-emerald-100 rounded-lg">
+                                    <div className="flex items-center gap-1.5 overflow-hidden">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          playSoundEffect('click');
+                                          const audio = new Audio(activeHp.audioData);
+                                          audio.play().catch(er => console.error(er));
+                                        }}
+                                        className="p-1 bg-emerald-505 rounded-full hover:bg-emerald-600 text-white shrink-0"
+                                      >
+                                        <Play className="w-3 h-3 fill-white" />
+                                      </button>
+                                      <span className="text-[9px] text-emerald-800 truncate font-mono font-bold">
+                                        {activeHp.audioName || "Ghi âm đã sẵn sàng"}
+                                      </span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        playSoundEffect('pop');
+                                        setNewLessonHotspots(prev => prev.map(h => {
+                                          if (h.id === selectedNewHotspotId) {
+                                            return { ...h, audioData: undefined, audioName: undefined };
+                                          }
+                                          return h;
+                                        }));
+                                      }}
+                                      className="text-[9px] text-rose-500 hover:bg-rose-100 p-1 rounded font-bold"
+                                      title="Xóa audio"
+                                    >
+                                      Gỡ âm
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="space-y-2">
+                                    <div 
+                                      onClick={() => {
+                                        const inp = document.getElementById(`hp-uploader-${activeHp.id}`);
+                                        if (inp) inp.click();
+                                      }}
+                                      className="border border-dashed border-slate-300 hover:border-indigo-400 p-2 rounded-lg text-center cursor-pointer bg-white transition-all text-[9.5px] font-bold"
+                                    >
+                                      📤 Nhấn tải âm và liên kết
+                                    </div>
+                                    <input 
+                                      id={`hp-uploader-${activeHp.id}`}
+                                      type="file"
+                                      accept="audio/*"
+                                      className="hidden"
+                                      onChange={async (e) => {
+                                        if (e.target.files && e.target.files[0]) {
+                                          const file = e.target.files[0];
+                                          try {
+                                            const b64 = await fileToBase64(file);
+                                            setNewLessonHotspots(prev => prev.map(h => {
+                                              if (h.id === selectedNewHotspotId) {
+                                                return { ...h, audioData: b64, audioName: file.name };
+                                              }
+                                              return h;
+                                            }));
+                                            playSoundEffect('success');
+                                          } catch(er) {
+                                            console.error(er);
+                                          }
+                                        }
+                                      }}
+                                    />
+                                    
+                                    <input 
+                                      type="text"
+                                      value={activeHp.audioData || ''}
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        setNewLessonHotspots(prev => prev.map(h => {
+                                          if (h.id === selectedNewHotspotId) {
+                                            return { 
+                                              ...h, 
+                                              audioData: val || undefined, 
+                                              audioName: val ? "Liên kết dán" : undefined 
+                                            };
+                                          }
+                                          return h;
+                                        }));
+                                      }}
+                                      placeholder="Paster URL audio mp3..."
+                                      className="w-full text-[8.5px] p-1.5 border rounded-lg"
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                              
+                              <button
+                                type="button"
+                                onClick={() => setSelectedNewHotspotId(null)}
+                                className="w-full bg-slate-100 border border-slate-250 py-1 rounded-xl text-[9px] font-black text-slate-600 hover:bg-slate-200 transition-all cursor-pointer"
+                              >
+                                ĐÓNG THIẾT KẾ ĐIỂM NÀY
+                              </button>
+                            </div>
+                          );
+                        })() : (
+                          <div className="my-auto text-center font-bold text-slate-400 text-[10px] space-y-1.5">
+                            <Volume2 className="w-6 h-6 text-indigo-300 mx-auto animate-pulse" />
+                            <p>Nhấn vào Loa bất kỳ trên hình ảnh hoặc nút màu tím để thiết kế phát âm cho điểm đó con nhé! 🌟</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+              )}
+
+              {isSpellingTopic ? (
+                newSpellingFormula.trim() && (
+                  <div className="bg-white border border-slate-200 rounded-2xl p-3 flex flex-wrap items-center gap-1.5 shadow-2xs">
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider mr-2 font-sans">Các khối chữ bé sẽ xếp:</span>
+                    {newSpellingFormula.trim().split(/\s+/)
+                      .filter(Boolean)
+                      .map((word, i) => (
+                        <span key={i} className="text-[10px] font-black bg-orange-50 border border-orange-200 text-orange-850 px-2.5 py-1 rounded-lg">
+                          {word}
+                        </span>
+                      ))
+                    }
+                  </div>
+                )
+              ) : (
+                scrambledWordsInput.trim() && (
+                  <div className="bg-white border border-slate-200 rounded-2xl p-3 flex flex-wrap items-center gap-1.5 shadow-2xs">
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider mr-2 font-sans">Các khối từ bé sẽ xếp:</span>
+                    {scrambledWordsInput.split(',')
+                      .map(w => w.trim())
+                      .filter(Boolean)
+                      .map((word, i) => (
+                        <span key={i} className="text-[10px] font-black bg-indigo-50 border border-indigo-200 text-indigo-800 px-2.5 py-1 rounded-lg">
+                          {word}
+                        </span>
+                      ))
+                    }
+                  </div>
+                )
               )}
 
               <div className="flex justify-end pt-2">
@@ -635,11 +2393,70 @@ export default function TeacherPortal({
                 const currentImg = itemOverride.customImage;
                 const currentAud = itemOverride.customAudio;
 
+                if (item.type === 'math') {
+                  return (
+                    <div key={item.id} className="space-y-3">
+                      <div className="p-5 bg-teal-50/70 border-2 border-teal-200 rounded-[28px] transition-all">
+                        <div className="flex items-center justify-between mb-4">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] bg-teal-200 text-teal-800 font-black px-2 py-0.5 rounded-md">
+                              Bài {idx + 1}
+                            </span>
+                            <h4 className="font-sans font-black text-teal-900 leading-snug text-base flex items-center gap-2">
+                              <span>{item.emoji}</span>
+                              {item.sentence}
+                            </h4>
+                          </div>
+                          
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteLessonItem(item.id)}
+                            className="text-[10px] font-black text-rose-600 hover:bg-rose-50 border border-slate-250 hover:border-rose-300 px-2.5 py-1 rounded-xl transition-all flex items-center gap-1 cursor-pointer"
+                            title="Xóa bài học này"
+                          >
+                            <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                            <span>Xóa Bài</span>
+                          </button>
+                        </div>
+                        
+                        <div className="space-y-2">
+                          <p className="text-[11px] font-bold text-teal-700 uppercase tracking-wide">
+                            {item.mathOperations?.length || 0} Phép tính tương ứng:
+                          </p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
+                            {item.mathOperations?.map((op, opIdx) => (
+                              <div key={op.id} className="bg-white border border-teal-100 rounded-xl p-3 text-center shadow-xs">
+                                <div className="text-sm font-black text-slate-800 tracking-wider bg-slate-50 py-2 rounded-lg mb-2">
+                                  {op.expression} = ?
+                                </div>
+                                <div className="flex flex-wrap justify-center gap-1.5">
+                                  {op.options.map((opt, optIdx) => (
+                                    <span 
+                                      key={optIdx} 
+                                      className={`px-2 py-0.5 text-[10px] font-bold rounded-md ${
+                                        opt === op.correctAnswer 
+                                          ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' 
+                                          : 'bg-slate-100 text-slate-500 border border-slate-200'
+                                      }`}
+                                    >
+                                      {opt}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
                 return (
-                  <div 
-                    key={item.id}
-                    className="p-5 bg-slate-50/70 hover:bg-slate-50 border-2 border-slate-200 rounded-[28px] grid grid-cols-1 md:grid-cols-12 gap-5 transition-all"
-                  >
+                  <div key={item.id} className="space-y-3">
+                    <div 
+                      className="p-5 bg-slate-50/70 hover:bg-slate-50 border-2 border-slate-200 rounded-[28px] grid grid-cols-1 md:grid-cols-12 gap-5 transition-all"
+                    >
                     {/* Sentence basic profile info */}
                     <div className="md:col-span-4 flex flex-col justify-between">
                       <div>
@@ -688,25 +2505,43 @@ export default function TeacherPortal({
                       </div>
 
                       {currentImg ? (
-                        <div className="bg-sky-50/40 border border-sky-100 rounded-2xl p-2 flex items-center gap-2.5">
-                          <img 
-                            src={currentImg} 
-                            alt="preview override" 
-                            className="w-12 h-12 rounded-xl object-cover border border-white shadow-xs"
-                            referrerPolicy="no-referrer"
-                          />
-                          <div className="overflow-hidden flex-1">
-                            <span className="text-[9px] font-black text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-md uppercase border border-emerald-100">
-                              Đã Sẵn Sàng 📷
-                            </span>
+                        <div className="space-y-2 w-full">
+                          <div className="bg-sky-50/40 border border-sky-100 rounded-2xl p-2 flex items-center gap-2.5">
+                            <img 
+                              src={currentImg} 
+                              alt="preview override" 
+                              className="w-12 h-12 rounded-xl object-cover border border-white shadow-xs"
+                              referrerPolicy="no-referrer"
+                            />
+                            <div className="overflow-hidden flex-1">
+                              <span className="text-[9px] font-black text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-md uppercase border border-emerald-100">
+                                Đã Sẵn Sàng 📷
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveImageOverride(item.id)}
+                              className="p-1.5 hover:bg-rose-500 text-slate-400 hover:text-white rounded-lg border border-transparent hover:border-rose-400 transition-all shrink-0 cursor-pointer"
+                              title="Xóa hình ảnh tự tải"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           </div>
+
                           <button
                             type="button"
-                            onClick={() => handleRemoveImageOverride(item.id)}
-                            className="p-1.5 hover:bg-rose-500 text-slate-400 hover:text-white rounded-lg border border-transparent hover:border-rose-400 transition-all shrink-0"
-                            title="Xóa hình ảnh tự tải"
+                            onClick={() => {
+                              playSoundEffect('click');
+                              setEditingHotspotsItemId(editingHotspotsItemId === item.id ? null : item.id);
+                              setSelectedExistingHotspotId(null);
+                            }}
+                            className={`w-full py-1.5 rounded-xl text-[9px] font-black border transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                              editingHotspotsItemId === item.id 
+                                ? 'bg-amber-500 text-white border-amber-600 shadow-inner' 
+                                : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200 hover:text-slate-900'
+                            }`}
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>📍 Đặt điểm phát âm trên ảnh ({itemOverride.audioHotspots?.length || item.audioHotspots?.length || 0})</span>
                           </button>
                         </div>
                       ) : (
@@ -851,7 +2686,382 @@ export default function TeacherPortal({
                         </div>
                       )}
                     </div>
+                  </div>
 
+                    {/* INTERACTIVE COORDINATE HOTSPOTS MANAGER FOR EXISTING ITEM */}
+                    {editingHotspotsItemId === item.id && (
+                      <div className="p-4 bg-amber-50/50 border-2 border-amber-200 rounded-[24px] space-y-3 animate-fade-in">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div>
+                            <span className="text-[10px] font-black text-amber-900 uppercase tracking-wider flex items-center gap-1">
+                              <Sparkles className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+                              <span>Sơ đồ phát âm: &ldquo;{item.sentence}&rdquo; 📍</span>
+                            </span>
+                            <p className="text-[9px] text-slate-500 font-bold">
+                              Nhấn trực tiếp lên ảnh để ghim loa phát âm; nhấp nốt loa để nghe thử/sửa âm thanh.
+                            </p>
+                          </div>
+                          
+                          <button
+                            type="button"
+                            onClick={() => {
+                              playSoundEffect('click');
+                              const currentHpList = itemOverride.audioHotspots || item.audioHotspots || [];
+                              const newHp: AudioHotspot = {
+                                id: `hp-${Date.now()}`,
+                                x: 50,
+                                y: 50
+                              };
+                              const updatedHpList = [...currentHpList, newHp];
+                              
+                              const updatedOver = {
+                                ...localOverrides,
+                                [item.id]: {
+                                  ...itemOverride,
+                                  audioHotspots: updatedHpList
+                                }
+                              };
+                              setLocalOverrides(updatedOver);
+                              onSaveOverrides(updatedOver);
+                              setSelectedExistingHotspotId(newHp.id);
+                            }}
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[9px] px-2.5 py-1.5 rounded-lg border-b-2 border-b-indigo-800 transition-all flex items-center gap-1 cursor-pointer"
+                          >
+                            <PlusCircle className="w-3 h-3" />
+                            <span>📍 GÁN THÊM ÂM THANH</span>
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+                          {/* Left: Interactive design canvas */}
+                          <div className="md:col-span-7 flex flex-col items-center justify-center bg-slate-900/5 p-2 rounded-xl border border-slate-200">
+                            <div 
+                              className="relative max-w-full cursor-crosshair overflow-hidden rounded-lg bg-slate-900"
+                              onMouseMove={(e) => {
+                                if (!draggingHotspotId) return;
+                                const rect = e.currentTarget.getBoundingClientRect();
+                                const x = ((e.clientX - rect.left) / rect.width) * 100;
+                                const y = ((e.clientY - rect.top) / rect.height) * 100;
+                                const clampedX = Math.max(0, Math.min(100, Math.round(x * 10) / 10));
+                                const clampedY = Math.max(0, Math.min(100, Math.round(y * 10) / 10));
+                                
+                                const currentHpList = itemOverride.audioHotspots || item.audioHotspots || [];
+                                const updatedHpList = currentHpList.map(h => {
+                                  if (h.id === draggingHotspotId) {
+                                    return { ...h, x: clampedX, y: clampedY };
+                                  }
+                                  return h;
+                                });
+                                
+                                const updatedOver = {
+                                  ...localOverrides,
+                                  [item.id]: {
+                                    ...itemOverride,
+                                    audioHotspots: updatedHpList
+                                  }
+                                };
+                                setLocalOverrides(updatedOver);
+                                onSaveOverrides(updatedOver);
+                              }}
+                              onTouchMove={(e) => {
+                                if (!draggingHotspotId) return;
+                                const rect = e.currentTarget.getBoundingClientRect();
+                                const touch = e.touches[0];
+                                if (!touch) return;
+                                const x = ((touch.clientX - rect.left) / rect.width) * 100;
+                                const y = ((touch.clientY - rect.top) / rect.height) * 100;
+                                const clampedX = Math.max(0, Math.min(100, Math.round(x * 10) / 10));
+                                const clampedY = Math.max(0, Math.min(100, Math.round(y * 10) / 10));
+                                
+                                const currentHpList = itemOverride.audioHotspots || item.audioHotspots || [];
+                                const updatedHpList = currentHpList.map(h => {
+                                  if (h.id === draggingHotspotId) {
+                                    return { ...h, x: clampedX, y: clampedY };
+                                  }
+                                  return h;
+                                });
+                                
+                                const updatedOver = {
+                                  ...localOverrides,
+                                  [item.id]: {
+                                    ...itemOverride,
+                                    audioHotspots: updatedHpList
+                                  }
+                                };
+                                setLocalOverrides(updatedOver);
+                                onSaveOverrides(updatedOver);
+                              }}
+                              onMouseUp={() => setDraggingHotspotId(null)}
+                              onMouseLeave={() => setDraggingHotspotId(null)}
+                              onTouchEnd={() => setDraggingHotspotId(null)}
+                              onTouchCancel={() => setDraggingHotspotId(null)}
+                              onClick={(e) => {
+                                if (draggingHotspotId) {
+                                  setDraggingHotspotId(null);
+                                  return;
+                                }
+                                const rect = e.currentTarget.getBoundingClientRect();
+                                const x = ((e.clientX - rect.left) / rect.width) * 100;
+                                const y = ((e.clientY - rect.top) / rect.height) * 100;
+                                
+                                const currentHpList = itemOverride.audioHotspots || item.audioHotspots || [];
+                                const newHp: AudioHotspot = {
+                                  id: `hp-${Date.now()}`,
+                                  x: Math.round(x * 10) / 10,
+                                  y: Math.round(y * 10) / 10
+                                };
+                                const updatedHpList = [...currentHpList, newHp];
+                                
+                                const updatedOver = {
+                                  ...localOverrides,
+                                  [item.id]: {
+                                    ...itemOverride,
+                                    audioHotspots: updatedHpList
+                                  }
+                                };
+                                setLocalOverrides(updatedOver);
+                                onSaveOverrides(updatedOver);
+                                setSelectedExistingHotspotId(newHp.id);
+                                playSoundEffect('pop');
+                              }}
+                            >
+                              <img 
+                                src={currentImg} 
+                                alt="Placement existing" 
+                                className="max-h-60 object-contain mx-auto select-none pointer-events-none opacity-90"
+                                referrerPolicy="no-referrer"
+                              />
+
+                              {(itemOverride.audioHotspots || item.audioHotspots || []).map((hp, hIdx) => {
+                                const isSelected = selectedExistingHotspotId === hp.id;
+                                const isDraggingThis = draggingHotspotId === hp.id;
+                                return (
+                                  <button
+                                    key={hp.id}
+                                    type="button"
+                                    style={{ left: `${hp.x}%`, top: `${hp.y}%` }}
+                                    onMouseDown={(e) => {
+                                      e.stopPropagation();
+                                      setDraggingHotspotId(hp.id);
+                                      setSelectedExistingHotspotId(hp.id);
+                                    }}
+                                    onTouchStart={(e) => {
+                                      e.stopPropagation();
+                                      setDraggingHotspotId(hp.id);
+                                      setSelectedExistingHotspotId(hp.id);
+                                    }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedExistingHotspotId(hp.id);
+                                      playSoundEffect('click');
+                                      if (hp.audioData) {
+                                        const aud = new Audio(hp.audioData);
+                                        aud.play().catch(er => console.error(er));
+                                      }
+                                    }}
+                                    className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-full p-2 shadow-md flex items-center justify-center transition-all ${
+                                      isDraggingThis ? 'cursor-grabbing scale-135 ring-4 ring-amber-400 z-40 bg-amber-400 text-white' :
+                                      isSelected
+                                        ? 'bg-amber-500 scale-125 ring-4 ring-amber-300 z-30 cursor-grab text-white'
+                                        : 'bg-indigo-600 hover:bg-indigo-500 scale-100 z-20 cursor-grab text-white'
+                                    } border border-white`}
+                                    title={`Ghim ${hIdx + 1}`}
+                                  >
+                                    <Volume2 className="w-3 h-3 text-white" />
+                                    <span className="absolute -bottom-4.5 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[7px] font-black px-1 rounded whitespace-nowrap">
+                                      {isSpellingTopic ? `Loa ${hIdx + 1}` : `Nốt ${hIdx + 1}`}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            <span className="text-[7.5px] font-bold text-slate-400 mt-1 uppercase">Bấm trực tiếp lên hình để ghim loa phát âm</span>
+                          </div>
+
+                          {/* Right: Audio detail manager */}
+                          <div className="md:col-span-5 flex flex-col justify-between p-3 bg-white border border-slate-200 rounded-xl min-h-[140px]">
+                            {selectedExistingHotspotId ? (() => {
+                              const currentHpList = itemOverride.audioHotspots || item.audioHotspots || [];
+                              const activeHpIndex = currentHpList.findIndex(h => h.id === selectedExistingHotspotId);
+                              const activeHp = currentHpList[activeHpIndex];
+                              if (!activeHp) return <div className="text-center text-slate-400 font-bold text-[9px] my-auto">Chọn một ghim...</div>;
+
+                              return (
+                                <div className="space-y-2.5 flex-1 flex flex-col justify-between">
+                                  <div>
+                                    <div className="flex items-center justify-between border-b pb-1">
+                                      <span className="text-[9px] font-black text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-100">
+                                        LOA GHIM SỐ {activeHpIndex + 1}
+                                      </span>
+                                      
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          playSoundEffect('pop');
+                                          const filteredHpList = currentHpList.filter(h => h.id !== selectedExistingHotspotId);
+                                          const updatedOver = {
+                                            ...localOverrides,
+                                            [item.id]: {
+                                              ...itemOverride,
+                                              audioHotspots: filteredHpList
+                                            }
+                                          };
+                                          setLocalOverrides(updatedOver);
+                                          onSaveOverrides(updatedOver);
+                                          setSelectedExistingHotspotId(null);
+                                        }}
+                                        className="p-1 text-slate-400 hover:text-rose-600 transition-all rounded cursor-pointer"
+                                        title="Xóa nút ghim này"
+                                      >
+                                        <Trash2 className="w-3 h-3" />
+                                      </button>
+                                    </div>
+                                    <p className="text-[7.5px] font-extrabold text-slate-400 mt-1 uppercase">Tọa độ: X {activeHp.x}%, Y {activeHp.y}%</p>
+                                  </div>
+
+                                  <div className="space-y-1.5 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                                    <span className="text-[8px] font-extrabold text-slate-500 uppercase">🎤 Chọn tệp giọng mẫu:</span>
+                                    
+                                    {activeHp.audioData ? (
+                                      <div className="flex items-center justify-between gap-1.5 bg-emerald-50 border border-emerald-100 p-1 rounded">
+                                        <div className="flex items-center gap-1 overflow-hidden">
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              playSoundEffect('click');
+                                              const sound = new Audio(activeHp.audioData);
+                                              sound.play().catch(er => console.error(er));
+                                            }}
+                                            className="p-1 bg-emerald-555 hover:bg-emerald-600 text-white rounded-full shrink-0"
+                                          >
+                                            <Play className="w-2.5 h-2.5 fill-white" />
+                                          </button>
+                                          <span className="text-[8.5px] text-emerald-800 font-mono truncate font-extrabold">
+                                            {activeHp.audioName || "Ghi âm đã liên kết"}
+                                          </span>
+                                        </div>
+                                        
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            playSoundEffect('pop');
+                                            const updatedHpList = currentHpList.map(h => {
+                                              if (h.id === selectedExistingHotspotId) {
+                                                return { ...h, audioData: undefined, audioName: undefined };
+                                              }
+                                              return h;
+                                            });
+                                            const updatedOver = {
+                                              ...localOverrides,
+                                              [item.id]: {
+                                                ...itemOverride,
+                                                audioHotspots: updatedHpList
+                                              }
+                                            };
+                                            setLocalOverrides(updatedOver);
+                                            onSaveOverrides(updatedOver);
+                                          }}
+                                          className="text-[8px] text-rose-500 font-bold hover:bg-rose-50 px-1 rounded cursor-pointer"
+                                        >
+                                          Xóa âm
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <div className="space-y-1.5">
+                                        <div
+                                          onClick={() => {
+                                            const inp = document.getElementById(`existing-hp-uploader-${activeHp.id}`);
+                                            if (inp) inp.click();
+                                          }}
+                                          className="border border-dashed border-slate-300 hover:border-indigo-400 bg-white p-1 rounded-md text-[8.5px] font-black text-slate-600 text-center cursor-pointer transition-all"
+                                        >
+                                          📤 Chọn file ghi âm mới (.mp3)
+                                        </div>
+                                        
+                                        <input 
+                                          id={`existing-hp-uploader-${activeHp.id}`}
+                                          type="file"
+                                          accept="audio/*"
+                                          className="hidden"
+                                          onChange={async (e) => {
+                                            if (e.target.files && e.target.files[0]) {
+                                              const file = e.target.files[0];
+                                              try {
+                                                const b64 = await fileToBase64(file);
+                                                const updatedHpList = currentHpList.map(h => {
+                                                  if (h.id === selectedExistingHotspotId) {
+                                                    return { ...h, audioData: b64, audioName: file.name };
+                                                  }
+                                                  return h;
+                                                });
+                                                const updatedOver = {
+                                                  ...localOverrides,
+                                                  [item.id]: {
+                                                    ...itemOverride,
+                                                    audioHotspots: updatedHpList
+                                                  }
+                                                };
+                                                setLocalOverrides(updatedOver);
+                                                onSaveOverrides(updatedOver);
+                                                playSoundEffect('success');
+                                              } catch(ex) {
+                                                console.error(ex);
+                                              }
+                                            }
+                                          }}
+                                        />
+
+                                        <input 
+                                          type="text"
+                                          value={activeHp.audioData || ''}
+                                          onChange={(e) => {
+                                            const val = e.target.value;
+                                            const updatedHpList = currentHpList.map(h => {
+                                              if (h.id === selectedExistingHotspotId) {
+                                                return { 
+                                                  ...h, 
+                                                  audioData: val || undefined, 
+                                                  audioName: val ? "Liên kết dán" : undefined 
+                                                };
+                                              }
+                                              return h;
+                                            });
+                                            const updatedOver = {
+                                              ...localOverrides,
+                                              [item.id]: {
+                                                ...itemOverride,
+                                                audioHotspots: updatedHpList
+                                              }
+                                            };
+                                            setLocalOverrides(updatedOver);
+                                            onSaveOverrides(updatedOver);
+                                          }}
+                                          placeholder="Nhập URL file ghi âm..."
+                                          className="w-full text-[8.5px] p-1.5 border rounded"
+                                        />
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedExistingHotspotId(null)}
+                                    className="w-full bg-slate-100 border text-[8.5px] font-black text-slate-550 hover:bg-slate-200 py-1.5 rounded-lg cursor-pointer"
+                                  >
+                                    XONG ĐIỂM NÀY
+                                  </button>
+                                </div>
+                              );
+                            })() : (
+                              <div className="my-auto text-center font-bold text-slate-400 text-[9px] space-y-1">
+                                <Volume2 className="w-5 h-5 text-indigo-300 mx-auto" />
+                                <p>Cấu hình Audio cho điểm ghim đang chọn.</p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -860,7 +3070,13 @@ export default function TeacherPortal({
           </div>
         )}
 
+            </>
+          );
+        })()}
+
       </div>
+
+
 
     </div>
   );

@@ -2,6 +2,51 @@
  * Helper to play Vietnamese Text-to-Speech natively in the browser.
  * Adjusts rate and pitch to sound cute, slow, and easy to follow for children aged 4-6.
  */
+function formatVietnameseSpelling(text: string): string {
+  if (text.includes('+') || text.includes('=')) {
+    const parts = text.split(/\s+/);
+    const converted = parts.map(part => {
+      const lower = part.toLowerCase();
+      if (part === '+') return ' ';
+      if (part === '=') return ', ';
+      
+      // Consonant conversion
+      if (lower === 'b') return 'bờ';
+      if (lower === 'c') return 'cờ';
+      if (lower === 'd') return 'dờ';
+      if (lower === 'đ') return 'đờ';
+      if (lower === 'g') return 'gờ';
+      if (lower === 'h') return 'hờ';
+      if (lower === 'l') return 'lờ';
+      if (lower === 'm') return 'mờ';
+      if (lower === 'n') return 'nờ';
+      if (lower === 'p') return 'pờ';
+      if (lower === 'q') return 'quờ';
+      if (lower === 'r') return 'rờ';
+      if (lower === 's') return 'sờ';
+      if (lower === 't') return 'tờ';
+      if (lower === 'v') return 'vờ';
+      if (lower === 'x') return 'xờ';
+      
+      // Digraphs
+      if (lower === 'ph') return 'phờ';
+      if (lower === 'nh') return 'nhờ';
+      if (lower === 'ch') return 'chờ';
+      if (lower === 'kh') return 'khờ';
+      if (lower === 'th') return 'thờ';
+      if (lower === 'tr') return 'trờ';
+      if (lower === 'gh') return 'gờ';
+      if (lower === 'gi') return 'di';
+      if (lower === 'ng') return 'ngờ';
+      if (lower === 'ngh') return 'ngờ';
+
+      return part;
+    });
+    return converted.join(' ').replace(/\s+/g, ' ').trim();
+  }
+  return text;
+}
+
 export const playVietnameseText = (
   text: string, 
   accent: 'north' | 'south' = 'north', 
@@ -11,7 +56,11 @@ export const playVietnameseText = (
   // This guarantees an incredibly clear, 100% authentic native speaker accent on all platforms,
   // bypassing broken, robotic, or foreign-sounding default browser voice synthesis.
   try {
-    const cleanText = text.trim();
+    let cleanText = text.trim();
+    if (cleanText.includes('+') || cleanText.includes('=')) {
+      cleanText = formatVietnameseSpelling(cleanText);
+    }
+    
     if (cleanText.length > 0) {
       // Standard stable Google Translate TTS service url
       const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=vi&client=tw-ob&q=${encodeURIComponent(cleanText)}`;

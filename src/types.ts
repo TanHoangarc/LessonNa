@@ -1,8 +1,24 @@
+export interface AudioHotspot {
+  id: string;
+  x: number; // percentage coordinate (0-100) from left
+  y: number; // percentage coordinate (0-100) from top
+  audioData?: string; // Base64 pronunciation URL
+  audioName?: string; // Helper description or filename
+}
+
+export interface MathOperation {
+  id: string;
+  expression: string;
+  correctAnswer: number;
+  options: number[];
+}
+
 export interface LessonItem {
   id: string;
   sentence: string; // The target sentence, e.g., "Mẹ mua quả bóng"
+  lessonName?: string; // Tên bài học (mặc định Lesson 1 hoặc nhập thủ công)
   englishTranslation?: string; // Quick reference if needed
-  type: 'word' | 'sentence';
+  type: 'word' | 'sentence' | 'math';
   topic: string; // e.g., "động vật", "gia đình"
   scrambledWords: string[]; // Scrambled tokens, e.g., ["quả bóng", "Mẹ", "mua"]
   difficulty: 'dễ' | 'trung bình' | 'khó';
@@ -13,6 +29,8 @@ export interface LessonItem {
   question?: string; // Dynamic target question if any, e.g. "Con tên gì?"
   customImage?: string; // Base64 data URL for illustration image uploaded by parents/teachers
   customAudio?: string; // Base64 data URL for teacher's custom voice/pronunciation
+  audioHotspots?: AudioHotspot[]; // Custom multi-point audio hot-spots overlayed on illustration image
+  mathOperations?: MathOperation[];
 }
 
 export interface Topic {
@@ -24,6 +42,8 @@ export interface Topic {
   description: string;
   emoji: string;
   items: LessonItem[];
+  isSpelling?: boolean;
+  isMath?: boolean;
 }
 
 export interface UserStats {

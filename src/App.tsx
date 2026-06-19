@@ -1,14 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { Topic, LessonItem, UserStats } from './types';
+import { Topic, LessonItem, UserStats, AudioHotspot } from './types';
 import { TOPICS } from './data/lessons';
 import Dashboard from './components/Dashboard';
 import SentenceBuilder from './components/SentenceBuilder';
 import AudioTutor from './components/AudioTutor';
+import { MathTutor } from './components/MathTutor';
 import CustomLessonCreator from './components/CustomLessonCreator';
 import TeacherPortal from './components/TeacherPortal';
+import LearningGames from './components/LearningGames';
+import SongsRoom from './components/SongsRoom';
 import { playSoundEffect, playVietnameseText } from './utils/audioHelper';
 import * as LucideIcons from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { getOrCreateSyncKey, setCustomSyncKey } from './utils/firebase';
+import { saveUserDataToFirebase, subscribeToFirebaseUserData } from './utils/firebaseSync';
+import { getMathIllustrations, saveMathIllustrations } from './utils/mathLibraryHelper';
 
 // Default user stats initialization
 const DEFAULT_STATS: UserStats = {
@@ -20,18 +26,40 @@ const DEFAULT_STATS: UserStats = {
 };
 
 export default function App() {
+  // Sync state for cloud database
+  const [syncKey, setSyncKey] = useState<string>(getOrCreateSyncKey());
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'error'>('idle');
+
   // Stats state persisted in localStorage
   const [userStats, setUserStats] = useState<UserStats>(DEFAULT_STATS);
-  // App views: 'dashboard' | 'active-play' | 'custom-creator' | 'teacher-portal'
-  const [currentView, setCurrentView] = useState<'dashboard' | 'active-play' | 'custom-creator' | 'teacher-portal'>('dashboard');
+  // App views: 'dashboard' | 'active-play' | 'custom-creator' | 'teacher-portal' | 'games' | 'songs'
+  const [currentView, setCurrentView] = useState<'dashboard' | 'active-play' | 'custom-creator' | 'teacher-portal' | 'games' | 'songs'>('dashboard');
+  const [preferredGame, setPreferredGame] = useState<'jigsaw' | 'farm'>('jigsaw');
   
   // Audio accent: 'north' | 'south'
   const [accent, setAccent] = useState<'north' | 'south'>('north');
 
-  // Custom visual/auditory overrides loading for topics & items
-  const [overrides, setOverrides] = useState<Record<string, { customImage?: string; customAudio?: string }>>(() => {
+  // Option setting to show/hide "Lời thú vị / Lời gắm thêm"
+  const [showFunFact, setShowFunFact] = useState<boolean>(() => {
     try {
-      const savedOverrides = localStorage.getItem('be_hoc_tieng_viet_overrides');
+      const saved = localStorage.getItem('be_hoc_tieng_viet_show_funfact');
+      return saved !== 'false'; // default is true
+    } catch {
+      return true;
+    }
+  });
+
+  const handleToggleFunFact = (val: boolean) => {
+    setShowFunFact(val);
+    try {
+      localStorage.setItem('be_hoc_tieng_viet_show_funfact', val.toString());
+    } catch {}
+  };
+
+  // Custom visual/auditory overrides loading for topics & items
+  const [overrides, setOverrides] = useState<Record<string, { customImage?: string; customAudio?: string; audioHotspots?: AudioHotspot[] }>>(() => {
+    try {
+      const savedOverrides = localStorage.getItem('be_hoc_tieng_viet_overrides_v2');
       return savedOverrides ? JSON.parse(savedOverrides) : {};
     } catch (e) {
       return {};
@@ -41,7 +69,7 @@ export default function App() {
   // User customized topics list
   const [customTopics, setCustomTopics] = useState<Topic[]>(() => {
     try {
-      const savedTopics = localStorage.getItem('be_hoc_tieng_viet_custom_topics');
+      const savedTopics = localStorage.getItem('be_hoc_tieng_viet_custom_topics_v2');
       return savedTopics ? JSON.parse(savedTopics) : TOPICS;
     } catch (e) {
       return TOPICS;
@@ -96,6 +124,85 @@ export default function App() {
     }
   }, []);
 
+  // Save current local states to cloud DB helper
+  const pushLocalToCloud = async (
+    key: string = syncKey,
+    stats: UserStats = userStats,
+    topics: Topic[] = customTopics,
+    ovr: Record<string, any> = overrides
+  ) => {
+    try {
+      setSyncStatus('syncing');
+      await saveUserDataToFirebase(key, stats, topics, ovr, getMathIllustrations());
+      setSyncStatus('synced');
+    } catch {
+      setSyncStatus('error');
+    }
+  };
+
+  // Firestore Snapshot real-time listener effects
+  useEffect(() => {
+    setSyncStatus('syncing');
+    const unsubscribe = subscribeToFirebaseUserData(syncKey, (fbData) => {
+      // 1. User stats sync
+      if (fbData.stats) {
+        const localStatsString = localStorage.getItem('be_hoc_tieng_viet_stats');
+        const localStats = localStatsString ? JSON.parse(localStatsString) : null;
+        if (JSON.stringify(fbData.stats) !== JSON.stringify(localStats || DEFAULT_STATS)) {
+          setUserStats(fbData.stats);
+          localStorage.setItem('be_hoc_tieng_viet_stats', JSON.stringify(fbData.stats));
+        }
+      } else {
+        // Seed initial local data if Firebase doesn't have it yet
+        saveUserDataToFirebase(syncKey, userStats, customTopics, overrides, getMathIllustrations());
+      }
+      
+      // 2. Custom Topics sync
+      if (fbData.customTopics) {
+        const localTopicsString = localStorage.getItem('be_hoc_tieng_viet_custom_topics_v2');
+        const localTopics = localTopicsString ? JSON.parse(localTopicsString) : null;
+        if (JSON.stringify(fbData.customTopics) !== JSON.stringify(localTopics || TOPICS)) {
+          setCustomTopics(fbData.customTopics);
+          localStorage.setItem('be_hoc_tieng_viet_custom_topics_v2', JSON.stringify(fbData.customTopics));
+        }
+      }
+      
+      // 3. Overrides sync
+      if (fbData.overrides) {
+        const localOverridesString = localStorage.getItem('be_hoc_tieng_viet_overrides_v2');
+        const localOverrides = localOverridesString ? JSON.parse(localOverridesString) : null;
+        if (JSON.stringify(fbData.overrides) !== JSON.stringify(localOverrides || {})) {
+          setOverrides(fbData.overrides);
+          localStorage.setItem('be_hoc_tieng_viet_overrides_v2', JSON.stringify(fbData.overrides));
+        }
+      }
+
+      // 4. Math Library sync
+      if (fbData.mathLibrary) {
+        const localMath = getMathIllustrations();
+        if (JSON.stringify(fbData.mathLibrary) !== JSON.stringify(localMath)) {
+          saveMathIllustrations(fbData.mathLibrary);
+        }
+      }
+      setSyncStatus('synced');
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [syncKey]);
+
+  // Sync when math library custom content triggers
+  useEffect(() => {
+    const handleMathLibraryUpdated = () => {
+      pushLocalToCloud(syncKey, userStats, customTopics, overrides);
+    };
+    window.addEventListener('math-library-updated', handleMathLibraryUpdated);
+    return () => {
+      window.removeEventListener('math-library-updated', handleMathLibraryUpdated);
+    };
+  }, [syncKey, userStats, customTopics, overrides]);
+
   // Save stats helper
   const saveStats = (newStats: UserStats) => {
     setUserStats(newStats);
@@ -104,26 +211,39 @@ export default function App() {
     } catch (e) {
       console.error("Localstorage save error", e);
     }
+    pushLocalToCloud(syncKey, newStats, customTopics, overrides);
   };
 
   // Save overrides helper
-  const handleSaveOverrides = (newOverrides: Record<string, { customImage?: string; customAudio?: string }>) => {
+  const handleSaveOverrides = (newOverrides: Record<string, { customImage?: string; customAudio?: string; audioHotspots?: AudioHotspot[] }>) => {
     setOverrides(newOverrides);
     try {
-      localStorage.setItem('be_hoc_tieng_viet_overrides', JSON.stringify(newOverrides));
+      localStorage.setItem('be_hoc_tieng_viet_overrides_v2', JSON.stringify(newOverrides));
     } catch (e) {
       console.error("Localstorage save overrides error", e);
     }
+    pushLocalToCloud(syncKey, userStats, customTopics, newOverrides);
   };
 
   // Save customTopics helper
   const handleSaveCustomTopics = (newTopics: Topic[]) => {
     setCustomTopics(newTopics);
     try {
-      localStorage.setItem('be_hoc_tieng_viet_custom_topics', JSON.stringify(newTopics));
+      localStorage.setItem('be_hoc_tieng_viet_custom_topics_v2', JSON.stringify(newTopics));
     } catch (e) {
       console.error("Localstorage save custom topics error", e);
     }
+    pushLocalToCloud(syncKey, userStats, newTopics, overrides);
+  };
+
+  // Switch/Enter custom sync key
+  const handleUpdateSyncKey = (newKey: string): boolean => {
+    const success = setCustomSyncKey(newKey);
+    if (success) {
+      setSyncKey(newKey);
+      return true;
+    }
+    return false;
   };
 
   // Reset entire syllabus to default config
@@ -131,11 +251,12 @@ export default function App() {
     setCustomTopics(TOPICS);
     setOverrides({});
     try {
-      localStorage.removeItem('be_hoc_tieng_viet_custom_topics');
-      localStorage.removeItem('be_hoc_tieng_viet_overrides');
+      localStorage.removeItem('be_hoc_tieng_viet_custom_topics_v2');
+      localStorage.removeItem('be_hoc_tieng_viet_overrides_v2');
     } catch (e) {
       console.error("Localstorage removal error for syllabus reset", e);
     }
+    saveUserDataToFirebase(syncKey, userStats, TOPICS, {}, getMathIllustrations());
   };
 
   // Compute merged topics dynamically applying parents/teachers custom overrides (illustrations and voice pronunciation overrides)
@@ -147,7 +268,8 @@ export default function App() {
         return {
           ...item,
           customImage: override.customImage ?? item.customImage,
-          customAudio: override.customAudio ?? item.customAudio
+          customAudio: override.customAudio ?? item.customAudio,
+          audioHotspots: override.audioHotspots ?? item.audioHotspots
         };
       }
       return item;
@@ -283,373 +405,458 @@ export default function App() {
   const activeItem = customLessonItem || (selectedTopic ? selectedTopic.items[currentIndex] : null);
 
   return (
-    <div className="min-h-screen bg-sky-50 text-[#2D3436] flex flex-col justify-between" id="be-hoc-tieng-viet-app">
+    <div className="min-h-screen bg-gradient-to-b from-[#E28014] via-[#F89C1E] to-[#F17513] text-[#2D3436] font-sans flex flex-col justify-center items-center py-5 px-4 md:py-8 md:px-10 relative overflow-hidden" id="be-hoc-tieng-viet-app">
       
-      {/* 🚀 Bubbly Navigation Header - Geometric Balance Style */}
-      <header className="sticky top-0 bg-white border-b-4 border-yellow-400 z-50 py-3.5 px-6 shadow-sm" id="app-header">
-        <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
+      {/* 🍁 Scenic autumn leaves and bubbles in the background (exactly matching bottom corner details of screenshot) */}
+      <div className="absolute -bottom-8 -right-8 text-[140px] opacity-25 pointer-events-none select-none rotate-45 select-none animate-bounce-slow">
+        🍁
+      </div>
+      <div className="absolute -bottom-6 -left-6 text-[100px] opacity-20 pointer-events-none select-none rotate-[-30deg] select-none">
+        🍁
+      </div>
+      <div className="absolute top-1/4 -right-10 text-6xl opacity-10 pointer-events-none select-none">
+        ☁️
+      </div>
+      <div className="absolute top-10 left-1/3 text-4xl opacity-10 pointer-events-none select-none">
+        ☁️
+      </div>
+
+      {/* 🌟 Top row floating status buttons (Directly recreated from the reference screenshot corners!) */}
+      {/* Top-Left Floating Circle Buttons */}
+      <div className="absolute top-4 left-4 sm:top-6 sm:left-8 z-30 flex items-center gap-2 sm:gap-3.5 select-none animate-fade-in">
+        {/* Profile Avatar Button with status indicator */}
+        <div 
+          onClick={() => { playSoundEffect('click'); playVietnameseText("Xin chào bé yêu! Cùng bé tập nói, rèn chữ và tích lũy thật nhiều cà rốt nhé!"); }}
+          className="w-11 h-11 sm:w-14 sm:h-14 bg-[#FFC048] rounded-full border-[4px] sm:border-[5.5px] border-white shadow-[0_6px_12px_rgba(0,0,0,0.15)] flex items-center justify-center cursor-pointer transform active:scale-90 hover:scale-105 transition-all text-xl sm:text-2xl relative"
+        >
+          🐱
+          <span className="absolute top-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></span>
+        </div>
+      </div>
+
+      {/* Top-Right Floating Circle Buttons */}
+      <div className="absolute top-4 right-4 sm:top-6 sm:right-8 z-30 flex items-center gap-2 sm:gap-3.5 select-none animate-fade-in">
+        {/* Parent Portal lock / settings button */}
+        <div 
+          onClick={() => { playSoundEffect('click'); handleTriggerParentLock(); }}
+          className="w-9 h-9 sm:w-12 sm:h-12 bg-[#FFC048] rounded-full border-[4px] sm:border-[5px] border-white shadow-[0_6px_12px_rgba(0,0,0,0.15)] flex items-center justify-center cursor-pointer transform active:scale-90 hover:scale-105 transition-all text-base sm:text-lg"
+          title="Khu vực của Cha Mẹ / Giáo viên"
+        >
+          ⚙️
+        </div>
+      </div>
+
+      {/* 🎪 THE MAGICAL "LEARNING MACHINE" CONSOLE (Thick rounded white frame border modeled from screenshot) */}
+      <div className="bg-[#FFFDF3] rounded-[48px] md:rounded-[56px] border-[14px] md:border-[18px] border-white shadow-[0_24px_65px_rgba(0,0,0,0.22)] p-4 md:p-6 max-w-6xl w-full relative overflow-hidden flex flex-col justify-between min-h-[690px] pt-14 md:pt-16" id="learning-machine-console">
+        
+        {/* Decorative thin sweet inner screen accent border */}
+        <div className="absolute inset-0 border-[3px] border-[#FFF8DE] rounded-[28px] md:rounded-[36px] pointer-events-none z-0"></div>
+
+        {/* 🚀 INTERNAL TOY CONSOLE HEADER FOR STATS DISPLAY */}
+        <header className="relative z-10 flex items-center justify-between gap-4 border-b-2 border-dashed border-[#F39C12]/15 pb-4 mb-4" id="tablet-header">
           
-          {/* Logo Brand */}
-          <div className="flex items-center gap-3 cursor-pointer" onClick={() => setCurrentView('dashboard')}>
-            <div className="w-12 h-12 bg-orange-400 rounded-xl flex items-center justify-center border-b-4 border-orange-600 shadow-sm text-2xl transform hover:rotate-3 transition-all">
-              🐥
+          {/* Carrot points pill & Active streak count to show metric health */}
+          <div className="flex items-center gap-2.5">
+            {/* Currency Carrot Badging */}
+            <div className="bg-orange-50 border border-orange-100 p-1 px-3 rounded-full flex items-center gap-1.5 shadow-sm">
+              <span className="text-sm animate-bounce-slow">🥕</span>
+              <span className="text-xs font-black text-[#D35400] font-mono">{userStats.coins * 105 || 1260}</span>
             </div>
-            <div>
-              <h1 className="text-xl md:text-2xl font-black text-sky-900 tracking-tight bubble-font flex items-center gap-1.5 leading-none">
-                <span>BÉ HỌC TIẾNG VIỆT</span>
-                <span className="text-[10px] uppercase font-black px-2 py-0.5 bg-yellow-400 text-white rounded-lg border-b-2 border-yellow-600">
-                  4 - 6 Tuổi
-                </span>
-              </h1>
-              <p className="text-[10px] text-gray-400 font-extrabold uppercase tracking-wider mt-1">
-                Phát âm chuẩn câu • Không bị ngược từ
-              </p>
+
+            {/* Streak Indicator */}
+            <div className="bg-amber-50 border border-amber-100 p-1 px-3 rounded-full flex items-center gap-1.5 shadow-sm">
+              <span className="text-xs">🔥</span>
+              <span className="text-[10px] font-black text-amber-950 font-sans">{userStats.streak} ngày</span>
             </div>
           </div>
 
-          {/* Controls: Voice Accent / Game scores */}
-          <div className="flex items-center flex-wrap gap-4 justify-center">
-            
-            {/* Tone Toggle Accent (North / South) */}
-            <div className="bg-slate-100 p-1 rounded-2xl border-2 border-slate-200 flex items-center gap-1">
-              <button
-                onClick={() => {
-                  playSoundEffect('click');
-                  setAccent('north');
-                }}
-                className={`flex items-center gap-1 text-xs font-black px-4 py-1.5 rounded-xl transition-all outline-none ${
-                  accent === 'north' 
-                    ? 'bg-white text-indigo-700 shadow-sm border-b-2 border-indigo-400' 
-                    : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                <span>🎙️ Giọng Bắc</span>
-              </button>
-              <button
-                onClick={() => {
-                  playSoundEffect('click');
-                  setAccent('south');
-                }}
-                className={`flex items-center gap-1 text-xs font-black px-4 py-1.5 rounded-xl transition-all outline-none ${
-                  accent === 'south' 
-                    ? 'bg-white text-indigo-700 shadow-sm border-b-2 border-indigo-400' 
-                    : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                <span>📢 Giọng Nam</span>
-              </button>
-            </div>
-
-            {/* Teacher/Parent Mode Button */}
+          {/* Kid-friendly Main Top Navigation Tabs */}
+          <div className="flex bg-slate-100/95 p-1 rounded-2xl border border-slate-200/50 font-sans shadow-2xs">
             <button
-              onClick={handleTriggerParentLock}
-              className="flex items-center gap-1.5 text-xs font-black px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 border-2 border-indigo-200 border-b-4 border-b-indigo-400 text-indigo-800 rounded-2xl transition-all hover:scale-102 active:scale-95 cursor-pointer outline-none"
-              title="Cấu hình giáo trình, sửa hình minh họa, thu âm giọng nói của tất cả bé hoặc bài giảng"
-            >
-              <LucideIcons.Settings className="w-4 h-4 text-indigo-600" />
-              <span>Thầy Cô / Ba Mẹ</span>
-            </button>
-
-            {/* Kid Stats Dashboard */}
-            <div className="flex items-center gap-2">
-              {/* Daily Streak */}
-              <div className="bg-orange-100 border-2 border-orange-200 text-orange-850 font-black text-xs px-3.5 py-2 rounded-2xl flex items-center gap-1.5">
-                <span>🔥</span>
-                <span>{userStats.streak} ngày</span>
-              </div>
-              
-              {/* Gold Star Count */}
-              <div className="bg-yellow-50 border-2 border-yellow-250 text-yellow-800 font-black text-xs px-3.5 py-2 rounded-2xl flex items-center gap-1.5 relative group">
-                <LucideIcons.Star className="w-4 h-4 text-yellow-500 fill-yellow-400 animate-pulse" />
-                <span>{userStats.stars} sao</span>
-              </div>
-
-              {/* Coins Count */}
-              <div className="bg-emerald-50 border-2 border-emerald-250 text-emerald-800 font-black text-xs px-3.5 py-2 rounded-2xl flex items-center gap-1.5">
-                <span>🪙</span>
-                <span>{userStats.coins} vàng</span>
-              </div>
-            </div>
-
-          </div>
-
-        </div>
-      </header>
-
-      {/* 🎪 Main Content Stage Area */}
-      <main className="flex-1 w-full py-6 md:py-8" id="primary-stage-game">
-        <AnimatePresence mode="wait">
-          
-          {/* VIEW 1: TOPIC SELECTION DASHBOARD */}
-          {currentView === 'dashboard' && (
-            <motion.div
-              key="dashboard"
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
-            >
-              <Dashboard 
-                topics={mergedTopics}
-                userStats={userStats}
-                onSelectTopic={handleSelectTopic}
-                onOpenCustomLessonCreator={() => {
+              onClick={() => {
+                if (currentView !== 'dashboard') {
                   playSoundEffect('click');
-                  setCurrentView('custom-creator');
-                }}
-              />
-            </motion.div>
-          )}
-
-          {/* VIEW 2: CUSTOM TOPIC GENERATION WITH AI */}
-          {currentView === 'custom-creator' && (
-            <motion.div
-              key="custom-creator"
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.98 }}
+                  setCurrentView('dashboard');
+                }
+              }}
+              className={`text-[10px] sm:text-xs font-black px-2.5 sm:px-4 py-1.5 rounded-xl transition-all outline-none flex items-center gap-1 cursor-pointer ${
+                currentView === 'dashboard'
+                  ? 'bg-white text-orange-600 shadow-xs border-b-2 border-orange-400'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
             >
-              <CustomLessonCreator 
-                onBackToDashboard={() => setCurrentView('dashboard')}
-                onLessonCreated={handleCustomLessonCreated}
-              />
-            </motion.div>
-          )}
-
-          {/* VIEW 4: TEACHER & PARENT CONFIGURATION PORTAL */}
-          {currentView === 'teacher-portal' && (
-            <motion.div
-              key="teacher-portal"
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
+              <span>🏠 Học Bài</span>
+            </button>
+            <button
+              onClick={() => {
+                if (currentView !== 'games') {
+                  playSoundEffect('click');
+                  setCurrentView('games');
+                }
+              }}
+              className={`text-[10px] sm:text-xs font-black px-2.5 sm:px-4 py-1.5 rounded-xl transition-all outline-none flex items-center gap-1 cursor-pointer ${
+                currentView === 'games'
+                  ? 'bg-white text-amber-600 shadow-xs border-b-2 border-amber-400'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
             >
-              <TeacherPortal 
-                topics={mergedTopics}
-                onSaveTopics={handleSaveCustomTopics}
-                onResetSyllabus={handleResetSyllabus}
-                overrides={overrides}
-                onSaveOverrides={handleSaveOverrides}
-                onBackToDashboard={() => setCurrentView('dashboard')}
-              />
-            </motion.div>
-          )}
-
-          {/* VIEW 3: ACTIVE PLAY ZONE (WORD SORTING & SPEECH TUTORING) */}
-          {currentView === 'active-play' && activeItem && (
-            <motion.div
-              key="active-play"
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
-              className="max-w-3xl mx-auto px-4"
-              id="active-playing-zone"
+              <span>🎮 Trò Chơi</span>
+            </button>
+            <button
+              onClick={() => {
+                if (currentView !== 'songs') {
+                  playSoundEffect('click');
+                  setCurrentView('songs');
+                }
+              }}
+              className={`text-[10px] sm:text-xs font-black px-2.5 sm:px-4 py-1.5 rounded-xl transition-all outline-none flex items-center gap-1 cursor-pointer ${
+                currentView === 'songs'
+                  ? 'bg-white text-indigo-600 shadow-xs border-b-2 border-indigo-400'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
             >
-              {/* Game Level Indicator Header */}
-              <div className="bg-white border-2 border-l-2 border-r-2 border-t-2 border-slate-200 border-b-6 border-b-slate-300 rounded-[28px] p-4 mb-6 flex flex-col md:flex-row items-center justify-between gap-4">
-                
-                {/* Topic Title */}
-                <div className="flex items-center gap-3">
-                  <div className="text-3xl filter drop-shadow-xs">
-                    {customLessonItem ? "✨" : selectedTopic?.emoji}
-                  </div>
-                  <div>
-                    <h5 className="font-black text-sky-950 text-base leading-tight">
-                      {customLessonItem ? "BÀI HỌC THẦN CHÚ AI" : selectedTopic?.name.toUpperCase()}
-                    </h5>
-                    <p className="text-[10px] uppercase font-black text-slate-400 tracking-wider mt-1">
-                      {customLessonItem ? "Chủ đề bé tự chọn" : `Phần ${currentIndex + 1} • Nhóm ${activeItem.difficulty}`}
-                    </p>
-                  </div>
-                </div>
+              <span>🎵 Ca Hát</span>
+            </button>
+          </div>
 
-                {/* Visual Bubble Step progress indicators */}
-                <div className="flex items-center gap-4 flex-wrap justify-center">
-                  <div className="flex items-center justify-center bg-slate-50 border border-slate-200 rounded-2xl p-1.5 shadow-inner gap-1.5">
-                    {/* Previous lesson button */}
-                    {selectedTopic && selectedTopic.items.length > 1 && (
-                      <button
-                        onClick={() => {
-                          if (currentIndex > 0) {
-                            playSoundEffect('click');
-                            setCurrentIndex(currentIndex - 1);
-                            setPlayStep('puzzle');
-                          }
-                        }}
-                        disabled={currentIndex === 0}
-                        className={`w-7 h-7 rounded-lg font-black flex items-center justify-center border transition-all cursor-pointer outline-none ${
-                          currentIndex === 0
-                            ? 'bg-gray-55 border-gray-150 text-gray-300 cursor-not-allowed opacity-40'
-                            : 'bg-white hover:bg-indigo-50 border-indigo-200 text-indigo-700 active:scale-95'
-                        }`}
-                        title="Bài trước"
-                      >
-                        <LucideIcons.ChevronLeft className="w-3.5 h-3.5 stroke-[3.5]" />
-                      </button>
-                    )}
+          {/* Current view subtitle */}
+          <div className="text-right hidden md:block">
+            <span className="text-[9px] font-black tracking-widest text-[#E67E22] uppercase bg-[#FFF2E0] px-2.5 py-0.5 rounded-full border border-[#FAD7A0]">
+              {currentView === 'dashboard' ? 'Trải nghiệm học' : currentView === 'games' ? 'Đấu trường trò chơi' : currentView === 'songs' ? 'Hòa âm âm nhạc' : 'Vùng tùy chỉnh'}
+            </span>
+          </div>
 
-                    {/* Interactive numbered circles */}
-                    {selectedTopic && selectedTopic.items.map((item, idx) => (
-                      <button 
-                        key={item.id}
-                        onClick={() => {
-                          playSoundEffect('click');
-                          setCurrentIndex(idx);
-                          setPlayStep('puzzle');
-                        }}
-                        title={`Bài ${idx + 1}`}
-                        className={`w-6 h-6 rounded-lg text-[10px] font-black flex items-center justify-center border transition-all cursor-pointer outline-none focus:ring-2 focus:ring-indigo-100 ${
-                          idx === currentIndex 
-                            ? 'bg-amber-400 border-amber-500 text-amber-950 scale-110 shadow-xs' 
-                            : idx < currentIndex 
-                              ? 'bg-emerald-100 hover:bg-emerald-200 border-emerald-300 text-emerald-800' 
-                              : 'bg-white hover:bg-slate-100 border-slate-300 text-slate-500'
-                        }`}
-                      >
-                        {idx + 1}
-                      </button>
-                    ))}
+        </header>
 
-                    {/* Next lesson button */}
-                    {selectedTopic && selectedTopic.items.length > 1 && (
-                      <button
-                        onClick={() => {
-                          if (currentIndex < selectedTopic.items.length - 1) {
-                            playSoundEffect('click');
-                            setCurrentIndex(currentIndex + 1);
-                            setPlayStep('puzzle');
-                          }
-                        }}
-                        disabled={currentIndex === selectedTopic.items.length - 1}
-                        className={`w-7 h-7 rounded-lg font-black flex items-center justify-center border transition-all cursor-pointer outline-none ${
-                          currentIndex === selectedTopic.items.length - 1
-                            ? 'bg-gray-55 border-gray-200 text-gray-300 cursor-not-allowed opacity-40'
-                            : 'bg-white hover:bg-indigo-50 border-indigo-200 text-indigo-700 active:scale-95'
-                        }`}
-                        title="Bài sau"
-                      >
-                        <LucideIcons.ChevronRight className="w-3.5 h-3.5 stroke-[3.5]" />
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Puzzle Step indicator */}
-                  <div className="flex items-center bg-slate-100 rounded-2xl p-1 text-xs font-black text-gray-500 border border-slate-200">
-                    <button
-                      onClick={() => {
-                        playSoundEffect('click');
-                        setPlayStep('puzzle');
-                      }}
-                      className={`px-4 py-2 rounded-xl transition-all cursor-pointer outline-none ${playStep === 'puzzle' ? 'bg-amber-400 text-white font-black border-b-2 border-b-amber-600' : 'text-slate-500'}`}
-                    >
-                      🧩 Ghép Câu
-                    </button>
-                    <button
-                      onClick={() => {
-                        playSoundEffect('click');
-                        setPlayStep('speech');
-                      }}
-                      className={`px-4 py-2 rounded-xl transition-all cursor-pointer outline-none ${playStep === 'speech' ? 'bg-indigo-500 text-white font-black border-b-2 border-b-indigo-700' : 'text-slate-500'}`}
-                    >
-                      🎙️ Luyện Âm
-                    </button>
-                  </div>
-                </div>
-
-              </div>
-
-              {/* Conditional step render */}
-              {playStep === 'puzzle' ? (
-                <SentenceBuilder 
-                  key={activeItem.id}
-                  item={activeItem}
-                  accent={accent}
-                  onCompleted={handlePuzzleCompleted}
-                  onBackToTopic={() => setCurrentView('dashboard')}
-                />
-              ) : (
-                <AudioTutor 
-                  key={activeItem.id}
-                  item={activeItem}
-                  accent={accent}
-                  onCompletedLessons={handleLessonItemFinished}
-                  onBackToTopic={() => setCurrentView('dashboard')}
-                  onBackToPuzzle={() => setPlayStep('puzzle')}
-                />
-              )}
-
-            </motion.div>
-          )}
-
-        </AnimatePresence>
-      </main>
-
-      {/* 🏡 Parents' Counseling Portal / Footer */}
-      <footer className="bg-slate-950 text-slate-400 text-xs py-10 border-t-4 border-slate-900" id="parents-counseling-footer">
-        <div className="max-w-5xl mx-auto px-6 grid grid-cols-1 md:grid-cols-2 gap-8">
-          
-          {/* Left panel - core goal and settings */}
-          <div className="space-y-4">
-            <h4 className="text-white font-bold text-sm flex items-center gap-2 font-display">
-              <span>🐥 Ứng Dụng Bé Học Tiếng Việt Chuẩn Câu</span>
-            </h4>
-            <p className="text-slate-400 leading-relaxed text-xs">
-              Được thiết kế tỉ mỉ khoa học dành riêng cho trẻ em tiền tiểu học từ 4 đến 6 tuổi. Ứng dụng giải quyết triệt để tình trạng nói ngược câu ở trẻ bằng cách giúp trẻ lắp ghép các vế câu chuẩn xác, rèn luyện tư duy ngữ pháp tự nhiên thông qua bối cảnh sinh hoạt thường ngày.
-            </p>
+        {/* 🎪 VIEW CONSOLE DISPLAY SCREEN PORT */}
+        <main className="flex-1 w-full relative z-10 py-2" id="primary-stage-game">
+          <AnimatePresence mode="wait">
             
-            {/* Setting actions */}
-            <div className="pt-2 flex flex-wrap items-center gap-3">
-              <button 
-                onClick={handleResetProgress}
-                className="text-rose-400 hover:text-rose-300 font-extrabold bg-rose-950/40 border border-rose-900/50 px-3.5 py-1.5 rounded-xl transition-all cursor-pointer flex items-center justify-center"
+            {/* VIEW 1: TOPIC SELECTION DASHBOARD */}
+            {currentView === 'dashboard' && (
+              <motion.div
+                key="dashboard"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
               >
-                🧹 Xóa lịch sử học của bé
-              </button>
-              <button 
-                onClick={handleTriggerParentLock}
-                className="text-cyan-400 hover:text-cyan-300 font-extrabold bg-cyan-950/40 border border-cyan-900/50 px-3.5 py-1.5 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1"
-                title="Sửa hình minh họa & tệp phát âm của giáo lý"
+                <Dashboard 
+                  topics={mergedTopics}
+                  userStats={userStats}
+                  onSelectTopic={handleSelectTopic}
+                  onOpenCustomLessonCreator={() => {
+                    playSoundEffect('click');
+                    setCurrentView('custom-creator');
+                  }}
+                  onNavigateToView={(view, subTab) => {
+                    setCurrentView(view);
+                    if (view === 'games' && subTab) {
+                      setPreferredGame(subTab as 'jigsaw' | 'farm');
+                    }
+                  }}
+                />
+              </motion.div>
+            )}
+
+            {/* VIEW 2: CUSTOM TOPIC GENERATION WITH AI */}
+            {currentView === 'custom-creator' && (
+              <motion.div
+                key="custom-creator"
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.98 }}
               >
-                <span>⚙️ Chế độ Giáo Viên / Cha Mẹ</span>
-              </button>
-            </div>
-          </div>
+                <CustomLessonCreator 
+                  onBackToDashboard={() => setCurrentView('dashboard')}
+                  onLessonCreated={handleCustomLessonCreated}
+                />
+              </motion.div>
+            )}
 
-          {/* Right panel - Parent tips */}
-          <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 space-y-3">
-            <h5 className="text-amber-400 font-bold text-xs uppercase tracking-wider font-sans flex items-center gap-1.5">
-              <span>💡 Dành Cho Ba Mẹ: Cách Sửa Lỗi Bé Nói Ngược Câu</span>
-            </h5>
-            <ol className="list-decimal pl-4 space-y-2 text-[11px] text-slate-300 leading-relaxed font-sans">
-              <li>
-                <strong>Tránh chỉ trích hoặc chế giễu:</strong> Khi trẻ nói ngược câu (như &ldquo;Bóng mua ba cho bé&rdquo;), ba mẹ hãy ôm bé nhẹ nhàng và lặp lại câu đúng ngữ pháp: &ldquo;À, ba mua quả bóng tròn tặng bé đúng hông nè!&rdquo;.
-              </li>
-              <li>
-                <strong>Học cụ quan trực quan:</strong> Cho trẻ chơi xếp các thẻ từ vựng hành động xếp tương ứng giống như Game 1 của ứng dụng giúp tay - mắt - tai bé liên kết logic chặt chẽ.
-              </li>
-              <li>
-                <strong>Kiên nhẫn đối chiếu:</strong> Dùng ghi âm của ứng dụng cho bé nghe giọng của mình dưới giọng cô giáo giảng dạy để tự bé điều chỉnh rành mạch, hình thành vốn câu chuẩn nhất.
-              </li>
-            </ol>
-          </div>
+            {/* VIEW 4: TEACHER & PARENT CONFIGURATION PORTAL */}
+            {currentView === 'teacher-portal' && (
+              <motion.div
+                key="teacher-portal"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+              >
+                <TeacherPortal 
+                  topics={mergedTopics}
+                  onSaveTopics={handleSaveCustomTopics}
+                  onResetSyllabus={handleResetSyllabus}
+                  overrides={overrides}
+                  onSaveOverrides={handleSaveOverrides}
+                  onBackToDashboard={() => setCurrentView('dashboard')}
+                  showFunFact={showFunFact}
+                  onToggleFunFact={handleToggleFunFact}
+                  syncKey={syncKey}
+                  onUpdateSyncKey={handleUpdateSyncKey}
+                  syncStatus={syncStatus}
+                />
+              </motion.div>
+            )}
 
+            {/* VIEW 5: INTEGRATED INTUITIVE LEARNING GAMES */}
+            {currentView === 'games' && (
+              <motion.div
+                key="games-screen"
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.98 }}
+              >
+                <LearningGames 
+                  userStats={userStats}
+                  onUpdateStats={saveStats}
+                  onBackToDashboard={() => setCurrentView('dashboard')}
+                  initialGame={preferredGame}
+                />
+              </motion.div>
+            )}
+
+            {/* VIEW 6: INTEGRATED NURSERY RHYMES SONGS ROOM */}
+            {currentView === 'songs' && (
+              <motion.div
+                key="songs-screen"
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.98 }}
+              >
+                <SongsRoom 
+                  onBackToDashboard={() => setCurrentView('dashboard')}
+                  accent={accent}
+                  onAwardCoins={(earned) => {
+                    const updated = {
+                      ...userStats,
+                      coins: userStats.coins + earned
+                    };
+                    saveStats(updated);
+                  }}
+                />
+              </motion.div>
+            )}
+
+            {/* VIEW 3: ACTIVE PLAY ZONE (WORD SORTING & SPEECH TUTORING) */}
+            {currentView === 'active-play' && activeItem && (
+              <motion.div
+                key="active-play"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+                className="max-w-4xl mx-auto px-1"
+                id="active-playing-zone"
+              >
+                {/* Game Level Indicator Header */}
+                <div className="bg-white border-2 border-l-2 border-r-2 border-t-2 border-slate-200 border-b-6 border-b-slate-300 rounded-[28px] p-4 mb-6 flex flex-col md:flex-row items-center justify-between gap-4">
+                  
+                  {/* Topic Title */}
+                  <div className="flex items-center gap-3">
+                    <div className="text-3xl filter drop-shadow-xs">
+                      {customLessonItem ? "✨" : selectedTopic?.emoji}
+                    </div>
+                    <div>
+                      <h5 className="font-black text-sky-950 text-base leading-tight">
+                        {customLessonItem ? "BÀI HỌC THẦN CHÚ AI" : selectedTopic?.name.toUpperCase()}
+                      </h5>
+                      <p className="text-[10px] uppercase font-black text-slate-400 tracking-wider mt-1">
+                        {customLessonItem ? "Chủ đề bé tự chọn" : `Phần ${currentIndex + 1} • Nhóm ${activeItem.difficulty}`}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Visual Bubble Step progress indicators */}
+                  <div className="flex items-center gap-4 flex-wrap justify-center">
+                    <div className="flex items-center justify-center bg-slate-50 border border-slate-200 rounded-2xl p-1.5 shadow-inner gap-1.5">
+                      {/* Previous lesson button */}
+                      {selectedTopic && selectedTopic.items.length > 1 && (
+                        <button
+                          onClick={() => {
+                            if (currentIndex > 0) {
+                              playSoundEffect('click');
+                              setCurrentIndex(currentIndex - 1);
+                              setPlayStep('puzzle');
+                            }
+                          }}
+                          disabled={currentIndex === 0}
+                          className={`w-7 h-7 rounded-lg font-black flex items-center justify-center border transition-all cursor-pointer outline-none ${
+                            currentIndex === 0
+                              ? 'bg-gray-55 border-gray-150 text-gray-300 cursor-not-allowed opacity-40'
+                              : 'bg-white hover:bg-slate-100 border-slate-300 text-slate-700 active:scale-95'
+                          }`}
+                          title="Bài trước"
+                        >
+                          <LucideIcons.ChevronLeft className="w-3.5 h-3.5 stroke-[3.5]" />
+                        </button>
+                      )}
+
+                      {/* Interactive numbered circles */}
+                      {selectedTopic && selectedTopic.items.map((item, idx) => (
+                        <button 
+                          key={item.id}
+                          onClick={() => {
+                            playSoundEffect('click');
+                            setCurrentIndex(idx);
+                            setPlayStep('puzzle');
+                          }}
+                          title={`Bài ${idx + 1}`}
+                          className={`w-6 h-6 rounded-lg text-[10px] font-black flex items-center justify-center border transition-all cursor-pointer outline-none focus:ring-2 focus:ring-indigo-100 ${
+                            idx === currentIndex 
+                              ? 'bg-[#FFEB33] border-yellow-500 text-yellow-950 scale-110 shadow-xs' 
+                              : idx < currentIndex 
+                                ? 'bg-emerald-100 hover:bg-emerald-200 border-emerald-300 text-emerald-800' 
+                                : 'bg-white hover:bg-slate-100 border-slate-300 text-slate-500'
+                          }`}
+                        >
+                          {idx + 1}
+                        </button>
+                      ))}
+
+                      {/* Next lesson button */}
+                      {selectedTopic && selectedTopic.items.length > 1 && (
+                        <button
+                          onClick={() => {
+                            if (currentIndex < selectedTopic.items.length - 1) {
+                              playSoundEffect('click');
+                              setCurrentIndex(currentIndex + 1);
+                              setPlayStep('puzzle');
+                            }
+                          }}
+                          disabled={currentIndex === selectedTopic.items.length - 1}
+                          className={`w-7 h-7 rounded-lg font-black flex items-center justify-center border transition-all cursor-pointer outline-none ${
+                            currentIndex === selectedTopic.items.length - 1
+                              ? 'bg-gray-55 border-gray-200 text-gray-300 cursor-not-allowed opacity-40'
+                              : 'bg-white hover:bg-slate-100 border-slate-300 text-slate-700 active:scale-95'
+                          }`}
+                          title="Bài sau"
+                        >
+                          <LucideIcons.ChevronRight className="w-3.5 h-3.5 stroke-[3.5]" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Puzzle Step indicator */}
+                    {activeItem.type !== 'math' && (
+                      <div className="flex items-center bg-slate-100 rounded-2xl p-1 text-xs font-black text-gray-500 border border-slate-200">
+                        <button
+                          onClick={() => {
+                            playSoundEffect('click');
+                            setPlayStep('puzzle');
+                          }}
+                          className={`px-4 py-2 rounded-xl transition-all cursor-pointer outline-none ${playStep === 'puzzle' ? 'bg-amber-400 text-white font-black border-b-2 border-b-amber-600' : 'text-slate-500'}`}
+                        >
+                          {selectedTopic?.id === 'danh-van' || selectedTopic?.isSpelling ? '🧩 Ghép Vần' : '🧩 Ghép Câu'}
+                        </button>
+                        <button
+                          onClick={() => {
+                            playSoundEffect('click');
+                            setPlayStep('speech');
+                          }}
+                          className={`px-4 py-2 rounded-xl transition-all cursor-pointer outline-none ${playStep === 'speech' ? 'bg-indigo-500 text-white font-black border-b-2 border-b-indigo-700' : 'text-slate-500'}`}
+                        >
+                          {selectedTopic?.id === 'danh-van' || selectedTopic?.isSpelling ? '🎙️ Đánh Vần' : '🎙️ Luyện Âm'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                </div>
+
+                {/* Conditional step render */}
+                {activeItem.type === 'math' ? (
+                  <MathTutor
+                    key={activeItem.id}
+                    item={activeItem}
+                    onCompleted={handleLessonItemFinished}
+                  />
+                ) : playStep === 'puzzle' ? (
+                  <SentenceBuilder 
+                    key={activeItem.id}
+                    item={activeItem}
+                    accent={accent}
+                    onCompleted={handlePuzzleCompleted}
+                    onBackToTopic={() => setCurrentView('dashboard')}
+                    showFunFact={showFunFact}
+                  />
+                ) : (
+                  <AudioTutor 
+                    key={activeItem.id}
+                    item={activeItem}
+                    accent={accent}
+                    onCompletedLessons={handleLessonItemFinished}
+                    onBackToTopic={() => setCurrentView('dashboard')}
+                    onBackToPuzzle={() => setPlayStep('puzzle')}
+                  />
+                )}
+
+              </motion.div>
+            )}
+
+          </AnimatePresence>
+        </main>
+
+      </div>
+
+      {/* 🏡 PARENTS' INFORMATION COUNSEL FOOTER BLOCK */}
+      <footer className="mt-12 max-w-5xl w-full grid grid-cols-1 md:grid-cols-2 gap-8 text-amber-950 font-sans relative z-10 px-4" id="counsel-footer">
+        
+        {/* Left footer card: Goals */}
+        <div className="bg-[#FFFCE4]/90 p-6 rounded-[32px] border-2 border-yellow-300 shadow-sm flex flex-col justify-between">
+          <div>
+            <h4 className="text-sm font-black text-slate-900 flex items-center gap-1.5 bubble-font uppercase">
+              <span>🐥 Phương pháp nói chuẩn câu</span>
+            </h4>
+            <p className="text-[11px] font-semibold text-amber-950/80 leading-relaxed mt-2.5">
+              Được thiết kế tỉ mỉ khoa học dành riêng cho trẻ từ 4 đến 6 tuổi. Ứng dụng giải quyết triệt để tình trạng nói ngược câu ở trẻ bằng cách hỗ trợ ghép từ vế logic và rèn nắn thanh âm ấm áp rành mạch.
+            </p>
+          </div>
+          
+          <div className="pt-4 flex flex-wrap gap-2.5">
+            <button 
+              onClick={handleResetProgress}
+              className="text-[10px] uppercase font-black text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-300 px-3.5 py-2 rounded-xl transition-all cursor-pointer"
+            >
+              🧹 Đặt lại toàn bộ điểm số
+            </button>
+            <button 
+              onClick={handleTriggerParentLock}
+              className="text-[10px] uppercase font-black text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-3.5 py-2 rounded-xl transition-all cursor-pointer"
+            >
+              ⚙️ Cấu hình học
+            </button>
+          </div>
         </div>
 
-        <div className="max-w-5xl mx-auto px-6 mt-10 pt-4 border-t border-slate-900 text-center text-slate-600 font-sans text-[10px]">
-          &copy; 2026 Bé Học Tiếng Việt. Sáng tạo bền bỉ cho tương lai trẻ thơ Việt Nam.
+        {/* Right footer card: Tips */}
+        <div className="bg-[#FFFCE4]/90 p-6 rounded-[32px] border-2 border-yellow-300 shadow-sm">
+          <h5 className="text-xs uppercase tracking-wider font-extrabold text-amber-900 flex items-center gap-1">
+            <span>💡 Mẹo hay cho ba mẹ dạy con tiếng Việt</span>
+          </h5>
+          <ul className="list-disc pl-4 space-y-2 text-[10.5px] font-semibold text-slate-800 leading-relaxed mt-3">
+            <li><strong>Nhắc khéo vui vẻ:</strong> Khi con nói ngược, ba mẹ trán dịu dắt vế câu chuẩn để não con phản xạ tự nhiên.</li>
+            <li><strong>Ghi âm đối chứng:</strong> Sử dụng âm thanh hướng dẫn trên máy để bé mô phỏng theo ngữ điệu dễ thương của cô.</li>
+            <li><strong>Mở khóa sticker:</strong> Tặng trẻ động viên bằng carrot sau mỗi bài thơ, bài hát ghép vần rành mạch nhé!</li>
+          </ul>
         </div>
+
       </footer>
 
-      {/* 🔒 Parent Gate Lock Modal - High-fidelity visual security challenge */}
+      {/* Brand Watermark on the bottom corner */}
+      <div className="absolute bottom-4 right-6 text-amber-900/40 text-xs font-black font-display pointer-events-none select-none flex items-center gap-1">
+        <span>BY CCT</span>
+        <span>🤖</span>
+      </div>
+
+      {/* 🔒 Parent Gate Lock Modal */}
       <AnimatePresence>
         {isParentLockOpen && (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-150 flex items-center justify-center p-4" id="parent-lock-modal">
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-150 flex items-center justify-center p-4 animate-fade-in" id="parent-lock-modal">
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white rounded-[32px] border-4 border-yellow-400 p-6 md:p-8 max-w-sm w-full shadow-2xl relative overflow-hidden text-center"
+              className="bg-white rounded-[32px] border-4 border-[#F2B922] p-6 md:p-8 max-w-sm w-full shadow-2xl relative overflow-hidden text-center"
             >
-              <div className="mx-auto w-14 h-14 bg-indigo-50 border-2 border-indigo-100 rounded-2xl flex items-center justify-center text-2xl mb-4 shadow-inner">
+              <div className="mx-auto w-14 h-14 bg-amber-50 border-2 border-amber-100 rounded-2xl flex items-center justify-center text-2xl mb-4 shadow-inner">
                 🔒
               </div>
 
@@ -657,12 +864,12 @@ export default function App() {
                 VÙNG BẢO MẬT CHO CHA MẸ
               </h4>
               <p className="text-[11px] text-slate-500 font-bold mt-2 leading-relaxed">
-                Bé ơi, đây là khu vực chỉnh sửa giáo án dành cho Thầy Cô & Ba Mẹ! Phụ huynh vui lòng giải bài toán nhỏ dưới đây để tiếp tục nhé:
+                Phụ huynh vui lòng giải bài toán nhỏ dưới đây để tiếp cận cài đặt sửa đổi chương trình học nhé con:
               </p>
 
               {/* Math Question Container */}
               <div className="my-5 bg-slate-50 border-2 border-slate-100 rounded-2xl py-3 px-6 flex items-center justify-center gap-2">
-                <span className="text-lg font-extrabold text-indigo-900 tracking-wider font-mono">
+                <span className="text-lg font-extrabold text-amber-900 tracking-wider font-mono">
                   {parentMathQuestion.q}
                 </span>
               </div>
@@ -676,13 +883,13 @@ export default function App() {
                   placeholder="Nhập kết quả..."
                   value={parentMathInput}
                   onChange={(e) => setParentMathInput(e.target.value)}
-                  className="w-full text-center text-base font-black tracking-widest text-slate-800 bg-slate-50 border-2 border-slate-200 focus:border-indigo-400 p-2.5 rounded-xl outline-none transition-all placeholder:text-slate-300 font-mono"
+                  className="w-full text-center text-base font-black tracking-widest text-slate-800 bg-slate-50 border-2 border-slate-200 focus:border-amber-400 p-2.5 rounded-xl outline-none transition-all placeholder:text-slate-300 font-mono"
                 />
 
                 {parentMathError && (
-                  <p className="text-xs font-black text-rose-500 flex items-center justify-center gap-1">
+                  <p className="text-xs font-black text-rose-500 flex items-center justify-center gap-1 animate-shake">
                     <LucideIcons.AlertCircle className="w-4 h-4 shrink-0" />
-                    <span>Kết quả chưa đúng, ba mẹ thử lại nhé!</span>
+                    <span>Kết quả chưa đúng, ba mẹ kiểm tra lại nhé!</span>
                   </p>
                 )}
 
@@ -694,13 +901,13 @@ export default function App() {
                       playSoundEffect('pop');
                       setIsParentLockOpen(false);
                     }}
-                    className="bg-slate-100 hover:bg-slate-200 border-2 border-slate-300 text-slate-600 font-black text-xs py-2.5 rounded-xl transition-all cursor-pointer"
+                    className="bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-600 font-black text-xs py-2.5 rounded-xl transition-all cursor-pointer"
                   >
                     HỦY BỎ
                   </button>
                   <button
                     type="submit"
-                    className="bg-indigo-600 hover:bg-indigo-700 border-2 border-indigo-800 text-white font-black text-xs py-2.5 rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-1"
+                    className="bg-amber-400 hover:bg-amber-500 text-amber-950 font-black text-xs py-2.5 rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-1"
                   >
                     <LucideIcons.CheckCircle className="w-4 h-4 stroke-[2.5]" />
                     <span>XÁC NHẬN</span>
@@ -708,8 +915,8 @@ export default function App() {
                 </div>
               </form>
 
-              <div className="mt-4 text-[9px] font-bold text-slate-400 uppercase tracking-widest">
-                Xác thực thông minh chống trẻ em bấm nhầm
+              <div className="mt-4 text-[9px] font-bold text-slate-450 uppercase tracking-widest">
+                Xác thực thông minh chống trẻ em nghịch nghịch
               </div>
             </motion.div>
           </div>

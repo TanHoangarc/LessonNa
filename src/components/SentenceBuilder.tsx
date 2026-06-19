@@ -1,22 +1,24 @@
-import React, { useState, useEffect } from 'react';
-import { LessonItem } from '../types';
-import { motion, AnimatePresence } from 'motion/react';
-import { playVietnameseText, playSoundEffect } from '../utils/audioHelper';
-import * as LucideIcons from 'lucide-react';
+import React, { useState, useEffect } from "react";
+import { LessonItem } from "../types";
+import { motion, AnimatePresence } from "motion/react";
+import { playVietnameseText, playSoundEffect } from "../utils/audioHelper";
+import * as LucideIcons from "lucide-react";
 
 interface SentenceBuilderProps {
   key?: React.Key;
   item: LessonItem;
-  accent: 'north' | 'south';
+  accent: "north" | "south";
   onCompleted: () => void;
   onBackToTopic: () => void;
+  showFunFact?: boolean;
 }
 
 export default function SentenceBuilder({
   item,
   accent,
   onCompleted,
-  onBackToTopic
+  onBackToTopic,
+  showFunFact = true,
 }: SentenceBuilderProps) {
   // Bubbles selected by the kid
   const [selectedWords, setSelectedWords] = useState<string[]>([]);
@@ -33,14 +35,14 @@ export default function SentenceBuilder({
     setIsSuccess(false);
     // Use the custom scrambled list provided in the lesson item
     // Ensure all trailing/leading whitespaces are stripped for clean matching
-    setScrambledPool([...item.scrambledWords].map(w => w.trim()));
+    setScrambledPool([...item.scrambledWords].map((w) => w.trim()));
   }, [item]);
 
   // Handle word block tap
   const handleWordTap = (word: string, index: number) => {
     if (isSuccess) return;
-    
-    playSoundEffect('click');
+
+    playSoundEffect("click");
     const newSelected = [...selectedWords, word];
     setSelectedWords(newSelected);
 
@@ -50,8 +52,12 @@ export default function SentenceBuilder({
     setScrambledPool(newPool);
 
     // Validate if the user is typing completely correctly
-    const finalCleanPath = newSelected.join(' ').toLowerCase().replace(/\s+/g, ' ').trim();
-    const targetClean = item.sentence.toLowerCase().replace(/\s+/g, ' ').trim();
+    const finalCleanPath = newSelected
+      .join(" ")
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .trim();
+    const targetClean = item.sentence.toLowerCase().replace(/\s+/g, " ").trim();
 
     // Check if the current pool is empty
     if (newPool.length === 0) {
@@ -59,20 +65,20 @@ export default function SentenceBuilder({
       if (finalCleanPath === targetClean) {
         // Success match!
         setIsSuccess(true);
-        playSoundEffect('success');
+        playSoundEffect("success");
         // Let user digest and autoplays native audio
         setTimeout(() => {
           handleListenGuide();
         }, 400);
       } else {
         // Reversed or incorrect order sentence
-        setShakeCount(prev => prev + 1);
-        playSoundEffect('wrong');
-        
+        setShakeCount((prev) => prev + 1);
+        playSoundEffect("wrong");
+
         // Wait 1 second (so children see results and face-shake animation) then bounce words back to original pool
         setTimeout(() => {
           setSelectedWords([]);
-          setScrambledPool([...item.scrambledWords].map(w => w.trim()));
+          setScrambledPool([...item.scrambledWords].map((w) => w.trim()));
         }, 1000);
       }
     }
@@ -81,11 +87,11 @@ export default function SentenceBuilder({
   // Undo last selected word
   const handleUndoWord = (word: string, index: number) => {
     if (isSuccess) return;
-    playSoundEffect('pop');
-    
+    playSoundEffect("pop");
+
     // Put word back into the pool
     setScrambledPool([...scrambledPool, word]);
-    
+
     const newSelected = [...selectedWords];
     newSelected.splice(index, 1);
     setSelectedWords(newSelected);
@@ -93,9 +99,9 @@ export default function SentenceBuilder({
 
   // Reset current progress
   const handleReset = () => {
-    playSoundEffect('pop');
+    playSoundEffect("pop");
     setSelectedWords([]);
-    setScrambledPool([...item.scrambledWords].map(w => w.trim()));
+    setScrambledPool([...item.scrambledWords].map((w) => w.trim()));
     setIsSuccess(false);
   };
 
@@ -103,7 +109,7 @@ export default function SentenceBuilder({
   const handleListenGuide = () => {
     if (item.customAudio) {
       const audio = new Audio(item.customAudio);
-      audio.play().catch(err => {
+      audio.play().catch((err) => {
         console.error("Custom audio play error:", err);
         playVietnameseText(item.sentence, accent);
       });
@@ -114,18 +120,29 @@ export default function SentenceBuilder({
 
   // Bubble colors - Geometric balance flat styling variations
   const poolBubbleColors = [
-    { bg: 'bg-orange-100 border-2 border-orange-300 text-orange-950 hover:bg-orange-200' },
-    { bg: 'bg-green-100 border-2 border-green-300 text-green-950 hover:bg-green-200' },
-    { bg: 'bg-sky-100 border-2 border-sky-300 text-sky-950 hover:bg-sky-200' },
-    { bg: 'bg-rose-100 border-2 border-rose-300 text-rose-950 hover:bg-rose-200' },
-    { bg: 'bg-purple-100 border-2 border-purple-300 text-purple-950 hover:bg-purple-200' }
+    {
+      bg: "bg-orange-100 border-2 border-orange-300 text-orange-950 hover:bg-orange-200",
+    },
+    {
+      bg: "bg-green-100 border-2 border-green-300 text-green-950 hover:bg-green-200",
+    },
+    { bg: "bg-sky-100 border-2 border-sky-300 text-sky-950 hover:bg-sky-200" },
+    {
+      bg: "bg-rose-100 border-2 border-rose-300 text-rose-950 hover:bg-rose-200",
+    },
+    {
+      bg: "bg-purple-100 border-2 border-purple-300 text-purple-950 hover:bg-purple-200",
+    },
   ];
 
   return (
-    <div className="bg-white rounded-[40px] border-l-2 border-r-2 border-t-2 border-gray-150 border-b-8 border-gray-200 p-6 md:p-8 max-w-2xl mx-auto shadow-sm" id="sentence-builder-block">
+    <div
+      className="bg-white rounded-[40px] border-l-2 border-r-2 border-t-2 border-gray-150 border-b-8 border-gray-200 p-6 md:p-8 max-w-2xl mx-auto shadow-sm"
+      id="sentence-builder-block"
+    >
       {/* Step Info */}
       <div className="flex items-center justify-between mb-6">
-        <button 
+        <button
           onClick={onBackToTopic}
           className="flex items-center gap-1.5 text-xs font-black text-teal-700 hover:text-teal-800 bg-white border-2 border-teal-200 border-b-4 border-b-teal-400 px-4 py-2 rounded-xl transition-all"
         >
@@ -135,47 +152,92 @@ export default function SentenceBuilder({
 
         <span className="text-[10px] font-black text-sky-700 uppercase tracking-widest bg-sky-100 border-2 border-sky-300 px-3.5 py-1.5 rounded-full flex items-center gap-1.5">
           <LucideIcons.Sparkles className="w-3.5 h-3.5 text-yellow-500 animate-spin-slow" />
-          <span>TRÒ CHƠI 1: BÉ GHÉP TỪ</span>
+          <span>{item.lessonName || "TRÒ CHƠI BÉ GHÉP CÂU"}</span>
         </span>
       </div>
 
+      {/* Custom prompt/question guide if provided by teacher */}
+      {item.question && (
+        <div className="mb-6 p-4 bg-indigo-50 border-2 border-indigo-150 rounded-2xl text-center">
+          <span className="text-[10px] font-black text-indigo-500 uppercase tracking-wider block mb-1">CÂU HỎI GỢI Ý CỦA CÔ:</span>
+          <p className="text-indigo-950 font-black text-lg font-sans">❓ &ldquo;{item.question}&rdquo;</p>
+        </div>
+      )}
+
       {/* Target prompt card */}
-      <div className="text-center mb-8 relative bg-sky-50/50 p-6 rounded-3xl border-2 border-sky-100">
+      <div className={`text-center mb-8 relative ${item.customImage ? 'p-2' : 'p-6 bg-sky-50/50 border-2 border-sky-100 min-h-[220px]'} rounded-3xl flex flex-col items-center justify-center`}>
         {item.customImage ? (
-          <div className="mb-4 flex justify-center">
-            <img 
-              src={item.customImage} 
-              alt={item.sentence} 
-              className="max-h-48 max-w-full rounded-2xl border-4 border-white shadow-md object-contain"
-              referrerPolicy="no-referrer"
-            />
+          <div className="flex justify-center relative select-none w-full">
+            <div
+              className="relative w-full overflow-hidden rounded-2xl shadow-md bg-white cursor-pointer"
+              onClick={handleListenGuide}
+            >
+              <img
+                src={item.customImage}
+                alt={item.sentence}
+                className="w-full h-auto object-contain rounded-2xl"
+                referrerPolicy="no-referrer"
+              />
+
+              {item.audioHotspots &&
+                item.audioHotspots.map((hp) => (
+                  <button
+                    key={hp.id}
+                    type="button"
+                    style={{ left: `${hp.x}%`, top: `${hp.y}%` }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      playSoundEffect("click");
+                      if (hp.audioData) {
+                        const sound = new Audio(hp.audioData);
+                        sound.play().catch((ex) => console.error(ex));
+                      } else {
+                        playVietnameseText(item.sentence, accent);
+                      }
+                    }}
+                    className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full p-2 bg-indigo-600 hover:bg-indigo-500 text-white border-2 border-white shadow-md z-30 flex items-center justify-center cursor-pointer"
+                    title="Nghe âm thanh ghim"
+                  >
+                    <LucideIcons.Volume2 className="w-3.5 h-3.5 text-white" />
+                  </button>
+                ))}
+
+              <button
+                className="absolute top-3 right-3 rounded-full p-3 bg-yellow-400 hover:bg-yellow-350 text-white shadow-md border-2 border-white"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleListenGuide();
+                }}
+              >
+                <LucideIcons.Volume2 className="w-5 h-5 fill-white" />
+              </button>
+            </div>
           </div>
         ) : (
-          <div className="text-7xl mb-4 animate-bounce-slow filter drop-shadow-xs">{item.emoji}</div>
-        )}
-        {item.question ? (
-          <>
-            <h4 className="text-xs font-black uppercase text-teal-600 tracking-wider font-sans bg-teal-50 px-3 py-1.5 rounded-full inline-block mb-2 border border-teal-100">
-              ❓ Bé hãy ghép câu để trả lời cho câu hỏi:
-            </h4>
-            <p className="text-2xl font-black text-sky-950 font-sans mt-2 leading-snug">
-              &ldquo;{item.question}&rdquo;
-            </p>
-            {/* Minimal assistance text */}
-            <p className="text-xs text-slate-400 font-extrabold font-sans mt-3">
-              💡 {item.funFact}
-            </p>
-          </>
-        ) : (
-          <>
-            <h4 className="text-[10px] font-black uppercase text-gray-400 tracking-widest font-sans">
-              Bé hãy ghép câu nói sau đây nhé:
-            </h4>
-            <p className="text-xl font-black text-sky-950 font-sans mt-1">
-              &ldquo;{item.sentence}&rdquo;
-            </p>
-            <p className="text-xs text-teal-600 font-extrabold font-sans mt-2.5 bg-white py-1 px-4 rounded-full inline-block border border-teal-100">💡 {item.funFact}</p>
-          </>
+          <div
+            className="relative w-full max-w-sm aspect-video bg-gradient-to-br from-indigo-50 to-sky-100 border-4 border-white shadow-sm rounded-3xl flex flex-col items-center justify-center overflow-hidden cursor-pointer hover:scale-105 active:scale-95 transition-all"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleListenGuide();
+            }}
+          >
+            <div className="absolute inset-0 flex items-center justify-center opacity-15">
+              <span className="text-[120px] filter blur-[2px]">
+                {item.emoji}
+              </span>
+            </div>
+            <div className="z-10 flex flex-col items-center gap-3 bg-white/60 p-4 rounded-2xl backdrop-blur-sm border border-white">
+              <LucideIcons.Image className="w-12 h-12 text-indigo-400 stroke-[1.5]" />
+              <span className="text-indigo-600 font-black uppercase text-sm tracking-wider">
+                Ảnh minh hoạ
+              </span>
+            </div>
+
+            {/* Audio helper button */}
+            <button className="absolute top-3 right-3 rounded-full p-3 bg-yellow-400 text-white shadow-md border-2 border-white animate-bounce-slow z-20">
+              <LucideIcons.Volume2 className="w-5 h-5 fill-white" />
+            </button>
+          </div>
         )}
       </div>
 
@@ -184,8 +246,8 @@ export default function SentenceBuilder({
         <label className="block text-center text-xs font-black uppercase text-sky-800 tracking-wider mb-3">
           Câu nói đúng trật tự của Bé:
         </label>
-        
-        <motion.div 
+
+        <motion.div
           animate={shakeCount > 0 ? { x: [0, -10, 10, -10, 10, 0] } : {}}
           transition={{ duration: 0.4 }}
           className="min-h-[96px] bg-sky-50/70 border-4 border-dashed border-sky-200 rounded-[28px] p-4 flex flex-wrap gap-3.5 items-center justify-center relative transition-all"
@@ -195,7 +257,7 @@ export default function SentenceBuilder({
               👉 Hãy chạm các mảnh chữ phía dưới để xếp câu nhé!
             </span>
           )}
-          
+
           <AnimatePresence>
             {selectedWords.map((word, index) => (
               <motion.button
@@ -219,10 +281,14 @@ export default function SentenceBuilder({
         <label className="block text-center text-xs font-black uppercase text-slate-400 tracking-wider mb-4">
           Từ vựng xáo trộn (Chạm để chọn):
         </label>
-        
-        <div className="flex flex-wrap gap-3.5 items-center justify-center p-2" id="scrambled-pool">
+
+        <div
+          className="flex flex-wrap gap-3.5 items-center justify-center p-2"
+          id="scrambled-pool"
+        >
           {scrambledPool.map((word, index) => {
-            const currentBubble = poolBubbleColors[index % poolBubbleColors.length];
+            const currentBubble =
+              poolBubbleColors[index % poolBubbleColors.length];
             return (
               <motion.button
                 key={`${word}-${index}`}
@@ -236,7 +302,9 @@ export default function SentenceBuilder({
             );
           })}
           {scrambledPool.length === 0 && !isSuccess && (
-            <span className="text-gray-300 font-sans italic text-sm">Trật tự trống rỗng!</span>
+            <span className="text-gray-300 font-sans italic text-sm">
+              Trật tự trống rỗng!
+            </span>
           )}
         </div>
       </div>
@@ -244,7 +312,7 @@ export default function SentenceBuilder({
       {/* Control Actions / Validation Results */}
       <div className="border-t-2 border-slate-100 pt-6 flex flex-col gap-4">
         {isSuccess ? (
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             className="bg-white border-2 border-l-2 border-r-2 border-t-2 border-emerald-200 border-b-8 border-emerald-500 rounded-[32px] p-6 text-center flex flex-col items-center shadow-xs"
@@ -257,7 +325,10 @@ export default function SentenceBuilder({
               Tuyệt đỉnh cú mèo! Bé xếp đúng rồi! 🎉
             </h5>
             <p className="text-emerald-800 text-sm font-semibold mt-1">
-              Câu chuẩn: <strong className="text-emerald-900 text-lg">&ldquo;{item.sentence}&rdquo;</strong>
+              Câu chuẩn:{" "}
+              <strong className="text-emerald-900 text-lg">
+                &ldquo;{item.sentence}&rdquo;
+              </strong>
             </p>
 
             <div className="flex flex-wrap gap-3 mt-5">
@@ -291,9 +362,9 @@ export default function SentenceBuilder({
               onClick={handleReset}
               disabled={selectedWords.length === 0}
               className={`font-black px-4 py-3 rounded-2xl text-xs flex items-center gap-1.5 transition-all border-2 ${
-                selectedWords.length > 0 
-                  ? 'bg-rose-50 border-rose-300 text-rose-600 hover:bg-rose-100 border-b-4 border-b-rose-400' 
-                  : 'bg-gray-100 text-gray-300 border-gray-200 cursor-not-allowed'
+                selectedWords.length > 0
+                  ? "bg-rose-50 border-rose-300 text-rose-600 hover:bg-rose-100 border-b-4 border-b-rose-400"
+                  : "bg-gray-100 text-gray-300 border-gray-200 cursor-not-allowed"
               }`}
             >
               <LucideIcons.RotateCcw className="w-4 h-4 text-current" />
