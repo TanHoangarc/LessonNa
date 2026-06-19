@@ -12,8 +12,6 @@ import SongsRoom from './components/SongsRoom';
 import { playSoundEffect, playVietnameseText } from './utils/audioHelper';
 import * as LucideIcons from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { getOrCreateSyncKey, setCustomSyncKey } from './utils/firebase';
-import { saveUserDataToFirebase, subscribeToFirebaseUserData } from './utils/firebaseSync';
 import { getMathIllustrations, saveMathIllustrations } from './utils/mathLibraryHelper';
 
 // Default user stats initialization
@@ -26,10 +24,6 @@ const DEFAULT_STATS: UserStats = {
 };
 
 export default function App() {
-  // Sync state for cloud database
-  const [syncKey, setSyncKey] = useState<string>(getOrCreateSyncKey());
-  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'error'>('idle');
-
   // Stats state persisted in localStorage
   const [userStats, setUserStats] = useState<UserStats>(DEFAULT_STATS);
   // App views: 'dashboard' | 'active-play' | 'custom-creator' | 'teacher-portal' | 'games' | 'songs'
@@ -124,85 +118,6 @@ export default function App() {
     }
   }, []);
 
-  // Save current local states to cloud DB helper
-  const pushLocalToCloud = async (
-    key: string = syncKey,
-    stats: UserStats = userStats,
-    topics: Topic[] = customTopics,
-    ovr: Record<string, any> = overrides
-  ) => {
-    try {
-      setSyncStatus('syncing');
-      await saveUserDataToFirebase(key, stats, topics, ovr, getMathIllustrations());
-      setSyncStatus('synced');
-    } catch {
-      setSyncStatus('error');
-    }
-  };
-
-  // Firestore Snapshot real-time listener effects
-  useEffect(() => {
-    setSyncStatus('syncing');
-    const unsubscribe = subscribeToFirebaseUserData(syncKey, (fbData) => {
-      // 1. User stats sync
-      if (fbData.stats) {
-        const localStatsString = localStorage.getItem('be_hoc_tieng_viet_stats');
-        const localStats = localStatsString ? JSON.parse(localStatsString) : null;
-        if (JSON.stringify(fbData.stats) !== JSON.stringify(localStats || DEFAULT_STATS)) {
-          setUserStats(fbData.stats);
-          localStorage.setItem('be_hoc_tieng_viet_stats', JSON.stringify(fbData.stats));
-        }
-      } else {
-        // Seed initial local data if Firebase doesn't have it yet
-        saveUserDataToFirebase(syncKey, userStats, customTopics, overrides, getMathIllustrations());
-      }
-      
-      // 2. Custom Topics sync
-      if (fbData.customTopics) {
-        const localTopicsString = localStorage.getItem('be_hoc_tieng_viet_custom_topics_v2');
-        const localTopics = localTopicsString ? JSON.parse(localTopicsString) : null;
-        if (JSON.stringify(fbData.customTopics) !== JSON.stringify(localTopics || TOPICS)) {
-          setCustomTopics(fbData.customTopics);
-          localStorage.setItem('be_hoc_tieng_viet_custom_topics_v2', JSON.stringify(fbData.customTopics));
-        }
-      }
-      
-      // 3. Overrides sync
-      if (fbData.overrides) {
-        const localOverridesString = localStorage.getItem('be_hoc_tieng_viet_overrides_v2');
-        const localOverrides = localOverridesString ? JSON.parse(localOverridesString) : null;
-        if (JSON.stringify(fbData.overrides) !== JSON.stringify(localOverrides || {})) {
-          setOverrides(fbData.overrides);
-          localStorage.setItem('be_hoc_tieng_viet_overrides_v2', JSON.stringify(fbData.overrides));
-        }
-      }
-
-      // 4. Math Library sync
-      if (fbData.mathLibrary) {
-        const localMath = getMathIllustrations();
-        if (JSON.stringify(fbData.mathLibrary) !== JSON.stringify(localMath)) {
-          saveMathIllustrations(fbData.mathLibrary);
-        }
-      }
-      setSyncStatus('synced');
-    });
-
-    return () => {
-      unsubscribe();
-    };
-  }, [syncKey]);
-
-  // Sync when math library custom content triggers
-  useEffect(() => {
-    const handleMathLibraryUpdated = () => {
-      pushLocalToCloud(syncKey, userStats, customTopics, overrides);
-    };
-    window.addEventListener('math-library-updated', handleMathLibraryUpdated);
-    return () => {
-      window.removeEventListener('math-library-updated', handleMathLibraryUpdated);
-    };
-  }, [syncKey, userStats, customTopics, overrides]);
-
   // Save stats helper
   const saveStats = (newStats: UserStats) => {
     setUserStats(newStats);
@@ -211,7 +126,6 @@ export default function App() {
     } catch (e) {
       console.error("Localstorage save error", e);
     }
-    pushLocalToCloud(syncKey, newStats, customTopics, overrides);
   };
 
   // Save overrides helper
@@ -222,7 +136,6 @@ export default function App() {
     } catch (e) {
       console.error("Localstorage save overrides error", e);
     }
-    pushLocalToCloud(syncKey, userStats, customTopics, newOverrides);
   };
 
   // Save customTopics helper
@@ -233,17 +146,6 @@ export default function App() {
     } catch (e) {
       console.error("Localstorage save custom topics error", e);
     }
-    pushLocalToCloud(syncKey, userStats, newTopics, overrides);
-  };
-
-  // Switch/Enter custom sync key
-  const handleUpdateSyncKey = (newKey: string): boolean => {
-    const success = setCustomSyncKey(newKey);
-    if (success) {
-      setSyncKey(newKey);
-      return true;
-    }
-    return false;
   };
 
   // Reset entire syllabus to default config
@@ -256,7 +158,6 @@ export default function App() {
     } catch (e) {
       console.error("Localstorage removal error for syllabus reset", e);
     }
-    saveUserDataToFirebase(syncKey, userStats, TOPICS, {}, getMathIllustrations());
   };
 
   // Compute merged topics dynamically applying parents/teachers custom overrides (illustrations and voice pronunciation overrides)
@@ -590,9 +491,6 @@ export default function App() {
                   onBackToDashboard={() => setCurrentView('dashboard')}
                   showFunFact={showFunFact}
                   onToggleFunFact={handleToggleFunFact}
-                  syncKey={syncKey}
-                  onUpdateSyncKey={handleUpdateSyncKey}
-                  syncStatus={syncStatus}
                 />
               </motion.div>
             )}

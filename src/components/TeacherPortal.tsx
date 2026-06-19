@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { 
   ArrowLeft, Upload, Trash2, Volume2, Mic, Square, Play, Pause, 
   Image as ImageIcon, Music, Check, RefreshCw, AlertCircle, Sparkles, Info, PlusCircle, FileText,
-  Cloud, Database, Copy
+  Cloud, Database, Copy, Download, FileJson
 } from 'lucide-react';
 import { playSoundEffect } from '../utils/audioHelper';
 import { Topic, LessonItem, AudioHotspot } from '../types';
@@ -48,9 +48,6 @@ interface TeacherPortalProps {
   onBackToDashboard: () => void;
   showFunFact: boolean;
   onToggleFunFact: (val: boolean) => void;
-  syncKey: string;
-  onUpdateSyncKey: (newKey: string) => boolean;
-  syncStatus: 'idle' | 'syncing' | 'synced' | 'error';
 }
 
 export default function TeacherPortal({
@@ -61,10 +58,7 @@ export default function TeacherPortal({
   onSaveOverrides,
   onBackToDashboard,
   showFunFact,
-  onToggleFunFact,
-  syncKey,
-  onUpdateSyncKey,
-  syncStatus
+  onToggleFunFact
 }: TeacherPortalProps) {
   // Navigation: selected topic to edit
   const [selectedTopicId, setSelectedTopicId] = useState<string>(topics[0]?.id || '');
@@ -936,8 +930,8 @@ export default function TeacherPortal({
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
             }`}
           >
-            <Cloud className="w-4 h-4" />
-            <span className="uppercase">4. Đồng bộ Đám mây</span>
+            <Database className="w-4 h-4" />
+            <span className="uppercase">4. Sao lưu & Khôi phục</span>
           </button>
         </div>
 
@@ -1260,114 +1254,163 @@ export default function TeacherPortal({
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-amber-100 pb-5">
                 <div>
                   <h3 className="text-lg font-black text-amber-950 uppercase tracking-tight flex items-center gap-2">
-                    <Cloud className="w-5 h-5 text-amber-600 animate-pulse" />
-                    <span>HỆ THỐNG ĐỒNG BỘ CƠ SỞ DỮ LIỆU ĐÁM MÂY</span>
+                    <Database className="w-5 h-5 text-amber-600 animate-pulse" />
+                    <span>HỆ THỐNG SAO LƯU & PHỤC HỒI DỮ LIỆU</span>
                   </h3>
                   <p className="text-xs text-amber-900 font-medium mt-1">
-                    Lưu trữ tất cả tiến độ học tập, tùy chỉnh giáo án và thư viện toán học của bé trực tuyến thay vì bộ nhớ tạm (Local Storage).
+                    Lưu trữ tất cả giáo án tự soạn, giọng nói ba mẹ ghi âm, hình ảnh con chụp, và học toán của bé trực tiếp thành file dữ liệu của riêng gia đình.
                   </p>
                 </div>
                 <div className="flex items-center gap-2 self-start md:self-center">
                   <span className="flex h-2.5 w-2.5 relative">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
                   </span>
                   <span className="bg-emerald-50 text-emerald-800 border border-emerald-250 text-[10px] font-black px-3 py-1 rounded-full uppercase">
-                    Đã Kết Nối Cloud Database
+                    Chế độ an toàn ngoại tuyến (Local)
                   </span>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
                 
-                {/* Left Panel: Current key status and copying */}
+                {/* Left Panel: Local backup download */}
                 <div className="md:col-span-6 bg-white border border-amber-200/60 rounded-2xl p-5 space-y-4 shadow-sm flex flex-col justify-between">
                   <div className="space-y-3">
-                    <div className="flex items-center gap-1.5 text-xs font-black text-slate-700 uppercase tracking-wider">
-                      <Database className="w-4 h-4 text-amber-600" />
-                      <span>Mã Đồng Bộ Thiết Bị Hiện Tại</span>
+                    <div className="flex items-center gap-1.5 text-xs font-black text-[#2C3E50] uppercase tracking-wider">
+                      <Download className="w-4 h-4 text-amber-600" />
+                      <span>XUẤT GIÁO ÁN & DOWNLOAD VỀ MÁY</span>
                     </div>
                     <p className="text-[11px] text-slate-500 leading-relaxed font-sans">
-                      Dùng mã này trên các thiết bị khác (điện thoại, iPad) để đồng bộ chung một giáo trình học tập của con!
+                      Tải file dạng `.json` chứa tất cả dữ liệu tùy chỉnh hiện tại để cất trữ trong máy tính/điện thoại hoặc chuyển qua máy khác học tiếp nhé!
                     </p>
                     
-                    {/* The sync key badge */}
-                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex items-center justify-between gap-3 font-mono">
-                      <span className="text-xl font-black text-slate-800 tracking-widest">{syncKey}</span>
-                      <button
-                        onClick={() => {
-                          const cleanKey = syncKey.replace(/[^\w-]/g, '');
-                          navigator.clipboard.writeText(cleanKey);
-                          setCopyFeedback(true);
-                          playSoundEffect('success');
-                          setTimeout(() => setCopyFeedback(false), 2000);
-                        }}
-                        className="bg-amber-100 hover:bg-amber-200 text-amber-850 border border-amber-200 p-2 rounded-lg cursor-pointer transition-all flex items-center gap-1 text-[10px] font-black uppercase outline-none"
-                        title="Sao chép"
-                      >
-                        {copyFeedback ? <Check className="w-3.5 h-3.5 stroke-[3]" /> : <Copy className="w-3.5 h-3.5" />}
-                        <span>{copyFeedback ? "Đã chép" : "Sao chép"}</span>
-                      </button>
+                    {/* Visual indicators of current data package */}
+                    <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 space-y-2 text-[11px] text-slate-600 font-medium">
+                      <div className="flex justify-between items-center mr-1">
+                        <span>📚 Tổng chủ đề hiện có:</span>
+                        <span className="font-extrabold text-slate-800">{topics.length}</span>
+                      </div>
+                      <div className="flex justify-between items-center mr-1">
+                        <span>🎙️ Bài ghi âm phát âm riêng:</span>
+                        <span className="font-extrabold text-slate-800">
+                          {Object.values(overrides).filter(o => o.customAudio).length}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center mr-1">
+                        <span>🖼️ Ảnh chụp bài học tùy chỉnh:</span>
+                        <span className="font-extrabold text-slate-800">
+                          {Object.values(overrides).filter(o => o.customImage).length}
+                        </span>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400 font-medium mt-3">
-                    <span>Trạng thái đồng bộ:</span>
-                    <span className="font-bold flex items-center gap-1">
-                      {syncStatus === 'syncing' && <span className="text-amber-600 animate-spin">⏳ Đang đồng bộ...</span>}
-                      {syncStatus === 'synced' && <span className="text-emerald-600">✨ Đã lưu đám mây</span>}
-                      {syncStatus === 'idle' && <span className="text-slate-500">🟢 Sẵn sàng</span>}
-                      {syncStatus === 'error' && <span className="text-rose-500">❌ Lỗi kết nối</span>}
-                    </span>
+                  <div className="pt-3 border-t border-slate-100">
+                    <button
+                      onClick={() => {
+                        try {
+                          const mathLibrary = getMathIllustrations();
+                          const backupObj = {
+                            giaoAnTiengVietBackup: true,
+                            version: 2,
+                            timestamp: new Date().toISOString(),
+                            topics,
+                            overrides,
+                            mathLibrary
+                          };
+                          const dataStr = JSON.stringify(backupObj, null, 2);
+                          const dataBlob = new Blob([dataStr], { type: 'application/json' });
+                          const url = URL.createObjectURL(dataBlob);
+                          
+                          const link = document.createElement('a');
+                          link.href = url;
+                          link.download = `be_hoc_tieng_viet_backup_${new Date().toISOString().slice(0, 10)}.json`;
+                          document.body.appendChild(link);
+                          link.click();
+                          document.body.removeChild(link);
+                          URL.revokeObjectURL(url);
+                          playSoundEffect('success');
+                          
+                          setCopyFeedback(true);
+                          setTimeout(() => setCopyFeedback(false), 2000);
+                        } catch (err) {
+                          alert("Không thể tạo file sao lưu lúc này!");
+                        }
+                      }}
+                      className="w-full bg-orange-100 hover:bg-orange-200 text-orange-950 border border-orange-200 py-3.5 rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1.5 text-xs font-black uppercase outline-none"
+                    >
+                      <Download className="w-4 h-4 stroke-[2.5]" />
+                      <span>{copyFeedback ? "ĐÃ TẢI XUỐNG THÀNH CÔNG!" : "TẢI FILE SAO LƯU (.JSON)"}</span>
+                    </button>
                   </div>
                 </div>
 
-                {/* Right Panel: Enter and pull different device database key */}
-                <div className="md:col-span-6 bg-white border border-amber-200/60 rounded-2xl p-5 space-y-4 shadow-sm">
-                  <div className="flex items-center gap-1.5 text-xs font-black text-slate-700 uppercase tracking-wider">
-                    <span>📥 Kết Nối Thiết Bị Khác / Nhập Mã Mới</span>
+                {/* Right Panel: Upload backup file */}
+                <div className="md:col-span-6 bg-white border border-amber-200/60 rounded-2xl p-5 space-y-4 shadow-sm flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center gap-1.5 text-xs font-black text-[#2C3E50] uppercase tracking-wider">
+                      <Upload className="w-4 h-4 text-emerald-600" />
+                      <span>NHẬP FILE SAO LƯU TỪ MÁY CHỮA/LÀM MỚI</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-relaxed font-sans mb-3">
+                      Chọn tệp sao lưu `.json` đã tải trước đây để hồi phục và ghi đè toàn bộ lộ trình, điểm số cùng ghi âm giọng phát âm tùy chỉnh của em bé.
+                    </p>
+
+                    {/* Hidden Native File Input on beautiful dashed-border trigger block */}
+                    <div className="relative group">
+                      <input
+                        type="file"
+                        accept=".json"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          
+                          const reader = new FileReader();
+                          reader.onload = (event) => {
+                            try {
+                              const parsed = JSON.parse(event.target?.result as string);
+                              if (!parsed || !parsed.giaoAnTiengVietBackup) {
+                                alert("File không hợp lệ! Vui lòng chọn đúng tệp tin JSON được tạo từ ứng dụng.");
+                                return;
+                              }
+
+                              const confirmOverwrite = window.confirm(
+                                `⚠️ CẢNH BÁO OVERWRITE:\n\nHành động này sẽ xóa và thay đổi toàn bộ nội dung giáo án đang có trên thiết bị để khớp với file sao lưu.\n\nBa mẹ xác nhận Khôi Phục Dữ Liệu?`
+                              );
+
+                              if (confirmOverwrite) {
+                                playSoundEffect('success');
+                                if (Array.isArray(parsed.topics)) {
+                                  onSaveTopics(parsed.topics);
+                                }
+                                if (parsed.overrides && typeof parsed.overrides === 'object') {
+                                  onSaveOverrides(parsed.overrides);
+                                }
+                                if (Array.isArray(parsed.mathLibrary)) {
+                                  saveMathIllustrations(parsed.mathLibrary);
+                                  window.dispatchEvent(new Event('math-library-updated'));
+                                }
+                                alert("🎉 Đã nhập file sao lưu thành công! Dữ liệu mới đã được áp dụng toàn diện trên thiết bị của bé.");
+                              }
+                            } catch (err) {
+                              alert("Không thể đọc tệp tin này, định dạng file JSON gặp lỗi!");
+                            }
+                          };
+                          reader.readAsText(file);
+                        }}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20"
+                      />
+                      
+                      <div className="border-2 border-dashed border-slate-200 hover:border-emerald-400 focus:border-emerald-500 bg-slate-50 rounded-xl p-6 text-center transition-all flex flex-col items-center justify-center gap-2 cursor-pointer relative z-10">
+                        <FileJson className="w-8 h-8 text-slate-400 group-hover:text-emerald-500 transition-colors" />
+                        <span className="text-[11px] font-extrabold text-slate-700">CHỌN TỆP TIN SAO LƯU (.JSON)</span>
+                        <span className="text-[9px] text-slate-400">Click hoặc kéo thả file của ba mẹ vào đây</span>
+                      </div>
+                    </div>
                   </div>
-                  <p className="text-[11px] text-slate-500 leading-relaxed font-sans">
-                    Nhập mã đồng bộ từ dòng điện thoại / máy tính khác để tải xuống toàn bộ dữ liệu tiến độ, sao lưu của thiết bị đó về máy này.
-                  </p>
 
-                  <div className="space-y-3">
-                    <input
-                      type="text"
-                      value={editingSyncKey}
-                      onChange={(e) => setEditingSyncKey(e.target.value.toUpperCase().trim())}
-                      placeholder="Ví dụ: V_XYZ123"
-                      className="w-full text-base font-bold bg-slate-50 border border-slate-200 focus:bg-white focus:border-amber-400 p-3 rounded-xl outline-none font-mono tracking-widest text-[#2C3E50]"
-                    />
-
-                    <button
-                      onClick={() => {
-                        if (!editingSyncKey) {
-                          alert("Vui lòng nhập mã đồng bộ trước khi kích hoạt ba mẹ nhé!");
-                          return;
-                        }
-                        if (editingSyncKey.length < 4) {
-                          alert("Mã đồng bộ không hợp lệ! Vui lòng kiểm tra lại độ dài mã.");
-                          return;
-                        }
-                        const confirmLoad = window.confirm(
-                          `Cảnh báo: Ba mẹ đang đổi sang Mã Đồng Bộ "${editingSyncKey}".\nHệ thống sẽ tải toàn bộ giáo trình, điểm số của mã này từ Cloud! Xác nhận chuyển đổi?`
-                        );
-                        if (confirmLoad) {
-                          playSoundEffect('success');
-                          const success = onUpdateSyncKey(editingSyncKey);
-                          if (success) {
-                            setEditingSyncKey('');
-                            alert(`Kết nối thành công! Đã chuyển đổi sang cơ sở dữ liệu của thiết bị "${editingSyncKey}"!`);
-                          } else {
-                            alert("Có lỗi xảy ra khi cập nhật. Ba mẹ hãy thử lại nhé.");
-                          }
-                        }
-                      }}
-                      className="w-full bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-black text-xs py-3.5 rounded-xl border-b-4 border-b-amber-700 hover:border-b-amber-800 transition-all flex items-center justify-center gap-1.5 cursor-pointer outline-none"
-                    >
-                      <span>📥 KẾT NỐI & TẢI TRÌNH HỌC TẬP</span>
-                    </button>
+                  <div className="pt-3 border-t border-slate-100 text-[10px] text-slate-400 font-medium italic">
+                    💡 Lưu ý: Tránh tự sửa đổi các ký tự bên trong file JSON để tránh xảy ra lỗi phân tích cú pháp dữ liệu.
                   </div>
                 </div>
 
@@ -1376,14 +1419,14 @@ export default function TeacherPortal({
               {/* Tips for parents / teacher */}
               <div className="bg-amber-100/40 border border-amber-200/50 p-4 rounded-2xl text-xs text-amber-900 space-y-2 leading-relaxed">
                 <div className="font-bold flex items-center gap-1 text-[13px]">
-                  <span>💡 Hướng dẫn ba mẹ cách sử dụng thiết thực:</span>
+                  <span>💡 Hướng dẫn ba mẹ cách chuyển giao án cực đơn giản:</span>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1 font-sans">
                   <div>
-                    <span className="font-extrabold text-amber-950">1. Soạn bài từ xa bằng Điện thoại:</span> Ba mẹ mở trang Cấu hình trên điện thoại, thêm các câu tiếng Việt và ảnh chụp con vật trực diện. Toàn bộ tiến trình sẽ tự động đẩy lên Cloud Firestore của thiết bị.
+                    <span className="font-extrabold text-amber-950">1. Soạn bài và Xuất File:</span> Ba mẹ dùng điện thoại để ghi âm phát âm chuẩn, chụp ảnh các đồ chơi con thích, rồi nhấn nút <span className="font-bold text-amber-900">"Tải file sao lưu"</span> ở khung bên trái về điện thoại của mình.
                   </div>
                   <div>
-                    <span className="font-extrabold text-amber-950">2. Em bé học mượt trên iPad:</span> Mở iPad, vào phần Đồng bộ này và bấm Nhập mã từ Điện thoại. iPad sẽ hiển thị tức thì các câu nói thân thương ba mẹ vừa soạn từ xa mà không cần chạm tay vào thiết bị của con!
+                    <span className="font-extrabold text-amber-950">2. Nhập File trên máy em bé:</span> Gửi file JSON này sang máy của bé (iPad, máy tính bảng). Mở trang này lên và nhấn <span className="font-bold text-emerald-800">"Chọn tệp tin"</span> để nạp dữ liệu. Bé sẽ học tức thì trên bài giảng ba mẹ tự soạn!
                   </div>
                 </div>
               </div>
