@@ -369,58 +369,34 @@ export function MathTutor({ item, onCompleted }: MathTutorProps) {
     setCompleted(false);
     setWrongAnswers({});
 
-    if (item.customImage) {
-      const itemIllustration: MathLibraryItem = {
-        id: `chosen-${item.id}`,
-        name: item.sentence || 'Đồ vật',
-        image: item.customImage,
-        isPreset: false
-      };
-      setAssignedIllustrations(Array(operations.length).fill(itemIllustration));
-    } else {
-      // Generate random non-duplicate illustrations from library and backup emojis
-      const library = getMathIllustrations();
-      const shuffledLibrary = [...library].sort(() => Math.random() - 0.5);
-      
-      // Backup unique emojis to fill up to any required count cleanly
-      const backupEmojis = [
-        '🍓', '🧸', '🎈', '🌟', '🧁', '⚽', '🦖', '🚗', '🍭', '🍎',
-        '🦁', '🦉', '🦊', '🐨', '🐼', '🐔', '🐸', '🐙', '🐝', '🦕', 
-        '🚀', '🛸', '⛵', '🍒', '🍋', '🍇', '🥑', '🍩', '🍪', '🍨'
-      ].sort(() => Math.random() - 0.5);
+    // Generate random illustration for each math calculation from the library
+    const library = getMathIllustrations();
+    
+    // Backup unique emojis to fill up or add variety
+    const backupEmojis = [
+      '🍓', '🧸', '🎈', '🌟', '🧁', '⚽', '🦖', '🚗', '🍭', '🍎',
+      '🦁', '🦉', '🦊', '🐨', '🐼', '🐔', '🐸', '🐙', '🐝', '🦕', 
+      '🚀', '🛸', '⛵', '🍒', '🍋', '🍇', '🥑', '🍩', '🍪', '🍨'
+    ];
 
-      const assigned: MathLibraryItem[] = [];
-      
-      // Track unique names/emojis to avoid duplicate representations
-      const chosenNames = new Set<string>();
-
-      // First assign from our shuffled library of custom/preset math illustrations
-      for (const libItem of shuffledLibrary) {
-        if (assigned.length >= operations.length) break;
-        const cleanName = libItem.name.toLowerCase().trim();
-        if (!chosenNames.has(cleanName)) {
-          assigned.push(libItem);
-          chosenNames.add(cleanName);
-        }
+    const assigned: MathLibraryItem[] = [];
+    
+    for (let i = 0; i < operations.length; i++) {
+      if (library.length > 0) {
+        const randomIndex = Math.floor(Math.random() * library.length);
+        assigned.push(library[randomIndex]);
+      } else {
+        const emoji = backupEmojis[Math.floor(Math.random() * backupEmojis.length)];
+        assigned.push({
+          id: `backup-emoji-${emoji}-${i}-${Math.random().toString(36).slice(2, 7)}`,
+          name: emoji,
+          image: '', // empty signifies text/emoji rendering
+          isPreset: true
+        });
       }
-
-      // Fill remaining with backup emojis
-      let backupIdx = 0;
-      while (assigned.length < operations.length && backupIdx < backupEmojis.length) {
-        const emoji = backupEmojis[backupIdx++];
-        if (!chosenNames.has(emoji)) {
-          assigned.push({
-            id: `backup-emoji-${emoji}`,
-            name: emoji,
-            image: '', // empty signifies use text/emoji rendering
-            isPreset: true
-          });
-          chosenNames.add(emoji);
-        }
-      }
-
-      setAssignedIllustrations(assigned);
     }
+    
+    setAssignedIllustrations(assigned);
   }, [item, operations.length]);
 
   if (operations.length === 0) {

@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { playSoundEffect } from '../utils/audioHelper';
 import { Topic, LessonItem, AudioHotspot } from '../types';
-import { MathLibraryItem, getMathIllustrations, saveMathIllustrations } from '../utils/mathLibraryHelper';
+import { MathLibraryItem, getMathIllustrations, saveMathIllustrations, compressImage } from '../utils/mathLibraryHelper';
 
 const adjustSentenceForDifficulty = (sentence: string, difficulty: 'dễ' | 'trung bình' | 'khó') => {
   let clean = sentence.trim();
@@ -144,15 +144,12 @@ export default function TeacherPortal({
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setNewMathImageRaw(reader.result as string);
-        const rawName = file.name.split('.')[0] || '';
-        const cleanName = rawName.charAt(0).toUpperCase() + rawName.slice(1);
-        setNewMathImageName(cleanName);
-      };
-      reader.readAsDataURL(file);
       playSoundEffect('click');
+      const compressedBase64 = await compressImage(file);
+      setNewMathImageRaw(compressedBase64);
+      const rawName = file.name.split('.')[0] || '';
+      const cleanName = rawName.charAt(0).toUpperCase() + rawName.slice(1);
+      setNewMathImageName(cleanName);
     } catch (err) {
       console.error("Math image file upload failed", err);
     }
@@ -391,25 +388,22 @@ export default function TeacherPortal({
       alert("Ấy gụ! Vui lòng chọn tệp hình ảnh (.png, .jpg, .jpeg, .webp, .gif) nha ba mẹ!");
       return;
     }
-    if (file.size > 1.5 * 1024 * 1024) {
-      alert("Kích thước hình ảnh lớn hơn 1.5 MB rồi ạ. Ba mẹ chọn ảnh nén nhỏ hơn để tải mượt nhé.");
-      return;
-    }
 
     try {
-      const base64Str = await fileToBase64(file);
+      playSoundEffect('click');
+      const compressedStr = await compressImage(file, 300, 300);
       const updated = {
         ...localOverrides,
         [itemId]: {
           ...localOverrides[itemId],
-          customImage: base64Str
+          customImage: compressedStr
         }
       };
       setLocalOverrides(updated);
       onSaveOverrides(updated);
       playSoundEffect('success');
     } catch (e) {
-      console.error("Base64 coverting image failed", e);
+      console.error("Base64 converting and compressing image failed", e);
     }
   };
 
@@ -610,20 +604,30 @@ export default function TeacherPortal({
       for (let i=0; i<5; i++) {
         let a, b, answer;
         if (newMathOp === '+') {
-          a = Math.floor(Math.random() * maxVal);
-          b = Math.floor(Math.random() * (maxVal - a));
+          // Exclude 0: a and b must be >= 1, and a + b <= maxVal
+          const adjustedMax = Math.max(2, maxVal);
+          a = Math.floor(Math.random() * (adjustedMax - 1)) + 1;
+          b = Math.floor(Math.random() * (adjustedMax - a)) + 1;
           answer = a + b;
         } else if (newMathOp === '-') {
-          a = Math.floor(Math.random() * maxVal) + 1;
-          b = Math.floor(Math.random() * a);
+          // Exclude 0: a >= 2, b >= 1, a > b, so answer (a - b) >= 1
+          const adjustedMax = Math.max(2, maxVal);
+          a = Math.floor(Math.random() * (adjustedMax - 1)) + 2; 
+          b = Math.floor(Math.random() * (a - 1)) + 1;
           answer = a - b;
         } else if (newMathOp === '*') {
-          a = Math.floor(Math.random() * (maxVal === 10 ? 5 : (maxVal === 50 ? 10 : 20)));
-          b = Math.floor(Math.random() * (maxVal === 10 ? 5 : (maxVal === 50 ? 10 : 20)));
+          // Exclude 0: a and b >= 1
+          const limit = maxVal === 10 ? 5 : (maxVal === 50 ? 10 : 20);
+          const adjustedLimit = Math.max(2, limit);
+          a = Math.floor(Math.random() * (adjustedLimit - 1)) + 1;
+          b = Math.floor(Math.random() * (adjustedLimit - 1)) + 1;
           answer = a * b;
         } else {
+          // Exclude 0: divisor >= 1, answer >= 1
           b = Math.floor(Math.random() * 9) + 1; // 1 to 9
-          answer = Math.floor(Math.random() * (maxVal === 10 ? 5 : (maxVal === 50 ? 10 : 20)));
+          const limit = maxVal === 10 ? 5 : (maxVal === 50 ? 10 : 20);
+          const adjustedLimit = Math.max(2, limit);
+          answer = Math.floor(Math.random() * (adjustedLimit - 1)) + 1;
           a = b * answer;
         }
 
@@ -631,7 +635,7 @@ export default function TeacherPortal({
         let options = [answer];
         while (options.length < 4) {
           const offset = Math.floor(Math.random() * 15) - 7;
-          const fake = Math.max(0, answer + (offset === 0 ? 3 : offset));
+          const fake = Math.max(1, answer + (offset === 0 ? 3 : offset));
           if (!options.includes(fake)) options.push(fake);
         }
         options.sort(() => Math.random() - 0.5);
