@@ -112,3 +112,32 @@ export function compressImage(file: File, maxWidth: number = 256, maxHeight: num
     reader.readAsDataURL(file);
   });
 }
+
+export interface CustomSounds {
+  clapping?: string; // base64 metadata URI
+  wrong?: string;    // base64 metadata URI
+  victory?: string;  // base64 metadata URI
+}
+
+export function getCustomSounds(): CustomSounds {
+  try {
+    const saved = localStorage.getItem('be_hoc_tieng_viet_custom_sounds');
+    if (saved) {
+      return JSON.parse(saved);
+    }
+  } catch (e) {
+    console.error("Failed to load custom sounds", e);
+  }
+  return {};
+}
+
+export function saveCustomSounds(sounds: CustomSounds) {
+  try {
+    localStorage.setItem('be_hoc_tieng_viet_custom_sounds', JSON.stringify(sounds));
+    window.dispatchEvent(new Event('storage'));
+    window.dispatchEvent(new CustomEvent('custom-sounds-updated'));
+  } catch (e) {
+    console.error("Failed to save custom sounds", e);
+  }
+}
+

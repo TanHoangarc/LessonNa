@@ -2,11 +2,14 @@ import React, { useState, useRef, useEffect } from 'react';
 import { 
   ArrowLeft, Upload, Trash2, Volume2, Mic, Square, Play, Pause, 
   Image as ImageIcon, Music, Check, RefreshCw, AlertCircle, Sparkles, Info, PlusCircle, FileText,
-  Cloud, Database, Copy, Download, FileJson
+  Cloud, Database, Copy, Download, FileJson, Sliders, LogOut, LogIn
 } from 'lucide-react';
 import { playSoundEffect } from '../utils/audioHelper';
 import { Topic, LessonItem, AudioHotspot } from '../types';
-import { MathLibraryItem, getMathIllustrations, saveMathIllustrations, compressImage } from '../utils/mathLibraryHelper';
+import { MathLibraryItem, getMathIllustrations, saveMathIllustrations, compressImage, CustomSounds, getCustomSounds, saveCustomSounds } from '../utils/mathLibraryHelper';
+import { auth } from '../firebase';
+import { signInWithGoogle, logOut, listenToAuth } from '../utils/firebaseHelper';
+import { User } from 'firebase/auth';
 
 const adjustSentenceForDifficulty = (sentence: string, difficulty: 'dễ' | 'trung bình' | 'khó') => {
   let clean = sentence.trim();
@@ -48,6 +51,8 @@ interface TeacherPortalProps {
   onBackToDashboard: () => void;
   showFunFact: boolean;
   onToggleFunFact: (val: boolean) => void;
+  onFirebaseBackup?: () => Promise<boolean>;
+  onFirebaseRestore?: () => Promise<boolean>;
 }
 
 export default function TeacherPortal({
@@ -58,13 +63,15 @@ export default function TeacherPortal({
   onSaveOverrides,
   onBackToDashboard,
   showFunFact,
-  onToggleFunFact
+  onToggleFunFact,
+  onFirebaseBackup,
+  onFirebaseRestore
 }: TeacherPortalProps) {
   // Navigation: selected topic to edit
   const [selectedTopicId, setSelectedTopicId] = useState<string>(topics[0]?.id || '');
 
   // Active Tab state for Teacher Portal
-  const [activePortalTab, setActivePortalTab] = useState<'sentence' | 'spelling' | 'math' | 'cloud'>('sentence');
+  const [activePortalTab, setActivePortalTab] = useState<'sentence' | 'spelling' | 'math' | 'cloud' | 'settings'>('sentence');
 
   // Local state for key updates
   const [editingSyncKey, setEditingSyncKey] = useState<string>('');
@@ -132,6 +139,17 @@ export default function TeacherPortal({
   const [newTopicEmoji, setNewTopicEmoji] = useState<string>('⭐');
   const [newTopicDescription, setNewTopicDescription] = useState<string>('');
 
+  // Firebase Auth State
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+
+  useEffect(() => {
+    const unsubscribe = listenToAuth((user) => {
+      setCurrentUser(user);
+    });
+    return () => unsubscribe();
+  }, []);
+
   useEffect(() => {
     const active = topics.find(t => t.id === selectedTopicId);
     if (active) {
@@ -187,6 +205,110 @@ export default function TeacherPortal({
     setMathIllustrations(presets);
     saveMathIllustrations(presets);
     playSoundEffect('success');
+  };
+
+  const handleCustomSoundUpload = async (e: React.ChangeEvent<HTMLInputElement>, role: 'clapping' | 'wrong' | 'victory') => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 1024 * 1024) {
+      alert("⚠️ File âm thanh quá lớn! Ba mẹ thầy cô vui lòng chọn file ngắn dưới 1MB để tránh đầy bộ nhớ nha!");
+      return;
+    }
+
+    try {
+      playSoundEffect('success');
+      const base64 = await fileToBase64(file);
+      const updated = {
+        ...customSounds,
+        [role]: base64
+      };
+      setCustomSounds(updated);
+      saveCustomSounds(updated);
+      alert("🎉 Đã lưu âm thanh tự chọn thành công!");
+    } catch (err) {
+      console.error("Custom sound upload failed", err);
+      alert("❌ Có lỗi xảy ra khi tải âm thanh lên, ba mẹ vui lòng thử file khác nha!");
+    }
+  };
+
+  const handleClearCustomSound = (role: 'clapping' | 'wrong' | 'victory') => {
+    playSoundEffect('wrong');
+    const updated = { ...customSounds };
+    delete updated[role];
+    setCustomSounds(updated);
+    saveCustomSounds(updated);
+  };
+
+  const handleTestPlaySound = (role: 'clapping' | 'wrong' | 'victory') => {
+    try {
+      if (customSounds[role]) {
+        const audio = new Audio(customSounds[role]);
+        audio.play().catch(e => {
+          console.warn("Custom sound playback aborted, trying synth fallback", e);
+          triggerDefaultPlay(role);
+        });
+      } else {
+        triggerDefaultPlay(role);
+      }
+    } catch (err) {
+      console.error("Test play sound error:", err);
+    }
+  };
+
+  const triggerDefaultPlay = (role: 'clapping' | 'wrong' | 'victory') => {
+    // Professional Web Audio synth generator fallback identical to child tutoring games
+    try {
+      const context = new (window.AudioContext || (window as any).webkitAudioContext)();
+      if (role === 'clapping') {
+        for (let i = 0; i < 6; i++) {
+          const delay = i * 0.08 + Math.random() * 0.03;
+          const osc = context.createOscillator();
+          const gainNode = context.createGain();
+          osc.connect(gainNode);
+          gainNode.connect(context.destination);
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(320 + Math.random() * 280, context.currentTime + delay);
+          gainNode.gain.setValueAtTime(0, context.currentTime + delay);
+          gainNode.gain.linearRampToValueAtTime(0.2, context.currentTime + delay + 0.01);
+          gainNode.gain.exponentialRampToValueAtTime(0.01, context.currentTime + delay + 0.05);
+          osc.start(context.currentTime + delay);
+          osc.stop(context.currentTime + delay + 0.06);
+        }
+      } else if (role === 'wrong') {
+        const osc = context.createOscillator();
+        const gainNode = context.createGain();
+        osc.connect(gainNode);
+        gainNode.connect(context.destination);
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(135, context.currentTime);
+        osc.frequency.linearRampToValueAtTime(95, context.currentTime + 0.4);
+        gainNode.gain.setValueAtTime(0, context.currentTime);
+        gainNode.gain.linearRampToValueAtTime(0.35, context.currentTime + 0.05);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 0.4);
+        osc.start();
+        osc.stop(context.currentTime + 0.4);
+      } else if (role === 'victory') {
+        const playD = (freq: number, delay: number, dur: number) => {
+          const osc = context.createOscillator();
+          const gainNode = context.createGain();
+          osc.connect(gainNode);
+          gainNode.connect(context.destination);
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, context.currentTime + delay);
+          gainNode.gain.setValueAtTime(0, context.currentTime + delay);
+          gainNode.gain.linearRampToValueAtTime(0.18, context.currentTime + delay + 0.02);
+          gainNode.gain.exponentialRampToValueAtTime(0.001, context.currentTime + delay + dur);
+          osc.start(context.currentTime + delay);
+          osc.stop(context.currentTime + delay + dur);
+        };
+        playD(392, 0, 0.3);
+        playD(523, 0.1, 0.3);
+        playD(659, 0.2, 0.3);
+        playD(783, 0.3, 0.3);
+        playD(1046, 0.4, 0.6);
+      }
+    } catch (_) {}
   };
 
   const handleRenameTopic = () => {
@@ -333,6 +455,19 @@ export default function TeacherPortal({
   const [mathIllustrations, setMathIllustrations] = useState<MathLibraryItem[]>([]);
   const [newMathImageRaw, setNewMathImageRaw] = useState<string>('');
   const [newMathImageName, setNewMathImageName] = useState<string>('');
+
+  const [customSounds, setCustomSounds] = useState<CustomSounds>({});
+
+  useEffect(() => {
+    setCustomSounds(getCustomSounds());
+    const handleSyncSounds = () => {
+      setCustomSounds(getCustomSounds());
+    };
+    window.addEventListener('custom-sounds-updated', handleSyncSounds);
+    return () => {
+      window.removeEventListener('custom-sounds-updated', handleSyncSounds);
+    };
+  }, []);
 
   useEffect(() => {
     const list = getMathIllustrations();
@@ -601,8 +736,12 @@ export default function TeacherPortal({
       // Generate 5 random math operations based on newDifficulty (dễ = 10, trung bình = 50, khó = 100)
       const maxVal = newDifficulty === 'dễ' ? 10 : (newDifficulty === 'trung bình' ? 50 : 100);
       const mathOperations: any[] = [];
-      for (let i=0; i<5; i++) {
-        let a, b, answer;
+      const seenExpressions = new Set<string>();
+      let attempts = 0;
+
+      while (mathOperations.length < 5 && attempts < 1000) {
+        attempts++;
+        let a = 0, b = 0, answer = 0;
         if (newMathOp === '+') {
           // Exclude 0: a and b must be >= 1, and a + b <= maxVal
           const adjustedMax = Math.max(2, maxVal);
@@ -631,6 +770,12 @@ export default function TeacherPortal({
           a = b * answer;
         }
 
+        const expr = `${a} ${newMathOp} ${b}`;
+        if (seenExpressions.has(expr)) {
+          continue; // skip duplicate expression
+        }
+        seenExpressions.add(expr);
+
         // generate options (4 options total for balanced 2x2 or 4-col grid layout)
         let options = [answer];
         while (options.length < 4) {
@@ -641,8 +786,8 @@ export default function TeacherPortal({
         options.sort(() => Math.random() - 0.5);
 
         mathOperations.push({
-          id: `op-${Date.now()}-${i}`,
-          expression: `${a} ${newMathOp} ${b}`,
+          id: `op-${Date.now()}-${mathOperations.length}`,
+          expression: expr,
           correctAnswer: answer,
           options
         });
@@ -937,10 +1082,28 @@ export default function TeacherPortal({
             <Database className="w-4 h-4" />
             <span className="uppercase">4. Sao lưu & Khôi phục</span>
           </button>
+
+          <button
+            onClick={() => {
+              playSoundEffect('click');
+              setActivePortalTab('settings');
+              setIsCreatingTopic(false);
+              setIsCreatingSpelling(false);
+              setIsCreatingMathTopic(false);
+            }}
+            className={`flex-1 min-w-[120px] py-3 text-xs font-black rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer outline-none ${
+              activePortalTab === 'settings'
+                ? 'bg-amber-600 text-white shadow-md border-b-2 border-amber-800'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+            }`}
+          >
+            <Sliders className="w-4 h-4" />
+            <span className="uppercase">5. Thiết lập</span>
+          </button>
         </div>
 
         {/* Topic Navigator Tabstrip */}
-        {activePortalTab !== 'cloud' && (
+        {activePortalTab !== 'cloud' && activePortalTab !== 'settings' && (
           <div className="mb-8">
             <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-3 font-sans">
               1. Chọn chủ đề {activePortalTab === 'sentence' ? 'ghép câu' : activePortalTab === 'spelling' ? 'ghép từ / đánh vần' : 'toán'} cần chỉnh sửa:
@@ -1267,12 +1430,106 @@ export default function TeacherPortal({
                 </div>
                 <div className="flex items-center gap-2 self-start md:self-center">
                   <span className="flex h-2.5 w-2.5 relative">
-                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                    <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${currentUser ? 'bg-blue-500' : 'bg-emerald-500'}`}></span>
                   </span>
-                  <span className="bg-emerald-50 text-emerald-800 border border-emerald-250 text-[10px] font-black px-3 py-1 rounded-full uppercase">
-                    Chế độ an toàn ngoại tuyến (Local)
+                  <span className={`border text-[10px] font-black px-3 py-1 rounded-full uppercase ${currentUser ? 'bg-blue-50 text-blue-800 border-blue-250' : 'bg-emerald-50 text-emerald-800 border-emerald-250'}`}>
+                    {currentUser ? 'Đã kết nối Firebase Cloud' : 'Chế độ an toàn ngoại tuyến (Local)'}
                   </span>
                 </div>
+              </div>
+
+              {/* Firebase Cloud Sync Section */}
+              <div className="bg-white border-2 border-blue-200 rounded-2xl p-6 shadow-sm">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+                  <div>
+                    <h4 className="text-sm font-black text-blue-900 uppercase tracking-tight flex items-center gap-2">
+                      <Cloud className="w-5 h-5 text-blue-600" />
+                      ĐỒNG BỘ ĐÁM MÂY (FIREBASE)
+                    </h4>
+                    <p className="text-xs text-slate-500 mt-1">Đồng bộ dữ liệu của bé qua lại giữa các thiết bị bằng tài khoản Google.</p>
+                  </div>
+                  {!currentUser ? (
+                    <button
+                      onClick={() => signInWithGoogle()}
+                      className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer shadow-sm active:scale-95"
+                    >
+                      <LogIn className="w-4 h-4" />
+                      ĐĂNG NHẬP GOOGLE ĐỂ ĐỒNG BỘ
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-3">
+                      <div className="text-xs font-medium text-slate-600">
+                        Xin chào, <span className="font-bold text-slate-800">{currentUser.displayName || currentUser.email}</span>
+                      </div>
+                      <button
+                        onClick={() => logOut()}
+                        className="p-2.5 bg-slate-100 hover:bg-rose-100 text-slate-600 hover:text-rose-600 rounded-xl transition-all cursor-pointer"
+                        title="Đăng xuất"
+                      >
+                        <LogOut className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {currentUser && (
+                  <div className="flex flex-col sm:flex-row gap-4 mt-6">
+                    <button
+                      onClick={async () => {
+                        if (!onFirebaseBackup) {
+                          alert("Tính năng chưa được cung cấp từ ứng dụng chính!");
+                          return;
+                        }
+                        setIsSyncing(true);
+                        const success = await onFirebaseBackup();
+                        setIsSyncing(false);
+                        if (success) {
+                          alert("✅ Đã sao lưu dữ liệu lên đám mây thành công!");
+                        } else {
+                          alert("❌ Có lỗi xảy ra khi sao lưu. Vui lòng thử lại.");
+                        }
+                      }}
+                      disabled={isSyncing}
+                      className="flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border-2 border-blue-200 py-3 rounded-xl cursor-pointer transition-all flex items-center justify-center gap-2 text-xs font-black uppercase outline-none disabled:opacity-50"
+                    >
+                      <Upload className="w-4 h-4 stroke-[2.5]" />
+                      {isSyncing ? "ĐANG ĐẨY LÊN..." : "ĐẨY DỮ LIỆU LÊN ĐÁM MÂY"}
+                    </button>
+
+                    <button
+                      onClick={async () => {
+                        if (!onFirebaseRestore) {
+                          alert("Tính năng chưa được cung cấp từ ứng dụng chính!");
+                          return;
+                        }
+                        const confirmOverwrite = window.confirm(
+                          `⚠️ CẢNH BÁO OVERWRITE:\n\nHành động này sẽ tải dữ liệu từ đám mây và GHI ĐÈ toàn bộ giáo án hiện tại trên máy này.\n\nBa mẹ có chắc chắn không?`
+                        );
+                        if (confirmOverwrite) {
+                          setIsSyncing(true);
+                          const success = await onFirebaseRestore();
+                          setIsSyncing(false);
+                          if (success) {
+                            alert("✅ Đã tải và khôi phục dữ liệu từ đám mây thành công!");
+                          } else {
+                            alert("❌ Có lỗi xảy ra hoặc chưa có dữ liệu nào được lưu trên đám mây!");
+                          }
+                        }
+                      }}
+                      disabled={isSyncing}
+                      className="flex-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-2 border-emerald-200 py-3 rounded-xl cursor-pointer transition-all flex items-center justify-center gap-2 text-xs font-black uppercase outline-none disabled:opacity-50"
+                    >
+                      <Download className="w-4 h-4 stroke-[2.5]" />
+                      {isSyncing ? "ĐANG TẢI VỀ..." : "TẢI DỮ LIỆU TỪ ĐÁM MÂY VỀ MÁY"}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-4 py-2">
+                <div className="flex-1 h-px bg-slate-200"></div>
+                <div className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">HOẶC LƯU FILE TRỰC TIẾP (KHÔNG DÙNG MẠNG)</div>
+                <div className="flex-1 h-px bg-slate-200"></div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
@@ -1435,6 +1692,187 @@ export default function TeacherPortal({
                 </div>
               </div>
 
+            </div>
+          </div>
+        )}
+
+        {/* SETTINGS / DYNAMIC GAME AUDIO CONFIGURATION CENTER */}
+        {activePortalTab === 'settings' && (
+          <div className="space-y-6 animate-fade-in font-sans">
+            <div className="bg-gradient-to-r from-amber-50/60 to-orange-50/60 border-2 border-amber-200 rounded-[32px] p-6 md:p-8 space-y-6 shadow-xs">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-amber-200 pb-5">
+                <div>
+                  <h3 className="text-lg font-black text-amber-950 uppercase tracking-tight flex items-center gap-2">
+                    <Sliders className="w-5 h-5 text-amber-600 animate-pulse" />
+                    <span>THIẾT LẬP ÂM THANH DÙNG CHUNG TRÊN TOÀN HỆ THỐNG</span>
+                  </h3>
+                  <p className="text-xs text-amber-900 font-medium mt-1">
+                    Ba mẹ & Thầy cô có thể tải lên các file âm thanh ngộ nghĩnh (.mp3, .wav) để tùy ý thay thế cho các phần **Ghép câu**, **Ghép từ** và **Học toán**. 👏⭐
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    playSoundEffect('click');
+                    localStorage.removeItem('be_hoc_tieng_viet_custom_sounds');
+                    setCustomSounds({});
+                    alert("🎉 Đã khôi phục toàn bộ âm thanh trò chơi về mặc định!");
+                  }}
+                  className="self-start md:self-center text-[10px] font-black text-amber-800 hover:text-white bg-white hover:bg-amber-600 border border-amber-300 px-3.5 py-2 rounded-xl transition-all flex items-center gap-1 shrink-0 cursor-pointer"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  <span>KHÔI PHỤC TOÀN BỘ MẶC ĐỊNH</span>
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                {/* Clapping Card */}
+                <div className="bg-white border-2 border-amber-100 hover:border-amber-300 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all">
+                  <div className="space-y-1">
+                    <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                      <span>👏 TIẾNG VỖ TAY CHÚC MỪNG (BÉ CHỌN ĐÚNG)</span>
+                      {customSounds.clapping ? (
+                        <span className="text-[9px] font-black text-teal-600 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-full uppercase">Đã cá nhân hóa</span>
+                      ) : (
+                        <span className="text-[9px] font-black text-slate-400 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded-full uppercase">Mặc định</span>
+                      )}
+                    </h4>
+                    <p className="text-[11px] text-slate-500 font-medium leading-relaxed font-sans">
+                      Âm thanh vang lên ngay lập tức khi trẻ chọn đúng đáp án toán học, ghép chính xác hàng từ hoặc câu nói.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleTestPlaySound('clapping')}
+                      className="p-2.5 bg-amber-100 hover:bg-amber-200 text-amber-700 rounded-xl font-bold text-xs flex items-center gap-1 cursor-pointer transition-all active:scale-95 border border-amber-200 outline-none"
+                    >
+                      <Play className="w-3.5 h-3.5 fill-amber-700" />
+                      <span>NGHE THỬ</span>
+                    </button>
+
+                    <label className="bg-slate-100 hover:bg-slate-200 border border-slate-250 px-3.5 py-2.5 rounded-xl text-xs font-black text-slate-700 cursor-pointer transition-all flex items-center gap-1.5 focus-within:ring-2 focus-within:ring-amber-300">
+                      <Upload className="w-3.5 h-3.5 text-slate-600" />
+                      <span>TẢI FILE (.MP3/.WAV)</span>
+                      <input
+                        type="file"
+                        accept="audio/mp3,audio/wav,audio/mpeg,audio/x-wav"
+                        onChange={(e) => handleCustomSoundUpload(e, 'clapping')}
+                        className="hidden"
+                      />
+                    </label>
+
+                    {customSounds.clapping && (
+                      <button
+                        type="button"
+                        onClick={() => handleClearCustomSound('clapping')}
+                        className="p-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-700 rounded-xl border border-rose-200 transition-all flex items-center justify-center cursor-pointer active:scale-95 outline-none"
+                        title="Xóa âm thanh này"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Wrong Buzz Card */}
+                <div className="bg-white border-2 border-amber-100 hover:border-amber-300 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all">
+                  <div className="space-y-1">
+                    <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                      <span>⚠️ TIẾNG CÒI "TÈ" BÁO SAI (BÉ CHỌN CHƯA ĐÚNG)</span>
+                      {customSounds.wrong ? (
+                        <span className="text-[9px] font-black text-teal-600 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-full uppercase">Đã cá nhân hóa</span>
+                      ) : (
+                        <span className="text-[9px] font-black text-slate-400 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded-full uppercase">Mặc định</span>
+                      )}
+                    </h4>
+                    <p className="text-[11px] text-slate-500 font-medium leading-relaxed font-sans">
+                      Tiếng còi nốt trầm báo hiệu hóm hỉnh và an thần khi con lỡ tay ghép chưa đúng khối.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleTestPlaySound('wrong')}
+                      className="p-2.5 bg-amber-100 hover:bg-amber-200 text-amber-700 rounded-xl font-bold text-xs flex items-center gap-1 cursor-pointer transition-all active:scale-95 border border-amber-200 outline-none"
+                    >
+                      <Play className="w-3.5 h-3.5 fill-amber-700" />
+                      <span>NGHE THỬ</span>
+                    </button>
+
+                    <label className="bg-slate-100 hover:bg-slate-200 border border-slate-250 px-3.5 py-2.5 rounded-xl text-xs font-black text-slate-700 cursor-pointer transition-all flex items-center gap-1.5 focus-within:ring-2 focus-within:ring-amber-300">
+                      <Upload className="w-3.5 h-3.5 text-slate-600" />
+                      <span>TẢI FILE (.MP3/.WAV)</span>
+                      <input
+                        type="file"
+                        accept="audio/mp3,audio/wav,audio/mpeg,audio/x-wav"
+                        onChange={(e) => handleCustomSoundUpload(e, 'wrong')}
+                        className="hidden"
+                      />
+                    </label>
+
+                    {customSounds.wrong && (
+                      <button
+                        type="button"
+                        onClick={() => handleClearCustomSound('wrong')}
+                        className="p-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-700 rounded-xl border border-rose-200 transition-all flex items-center justify-center cursor-pointer active:scale-95 outline-none"
+                        title="Xóa âm thanh này"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Victory Card */}
+                <div className="bg-white border-2 border-amber-100 hover:border-amber-350 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all">
+                  <div className="space-y-1">
+                    <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                      <span>🏆 NHẠC CHIẾN THẮNG HÀO HÙNG (HOÀN THÀNH CẢ BÀI HỌC)</span>
+                      {customSounds.victory ? (
+                        <span className="text-[9px] font-black text-teal-600 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-full uppercase">Đã cá nhân hóa</span>
+                      ) : (
+                        <span className="text-[9px] font-black text-slate-400 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded-full uppercase">Mặc định</span>
+                      )}
+                    </h4>
+                    <p className="text-[11px] text-slate-500 font-medium leading-relaxed font-sans">
+                      Giai điệu hoành tráng phát lên chúc mừng khi em bé xuất sắc chiến thắng hoàn thành toàn bộ bài học lớn.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleTestPlaySound('victory')}
+                      className="p-2.5 bg-amber-100 hover:bg-amber-200 text-amber-700 rounded-xl font-bold text-xs flex items-center gap-1 cursor-pointer transition-all active:scale-95 border border-amber-200 outline-none"
+                    >
+                      <Play className="w-3.5 h-3.5 fill-amber-700" />
+                      <span>NGHE THỬ</span>
+                    </button>
+
+                    <label className="bg-slate-100 hover:bg-slate-200 border border-slate-250 px-3.5 py-2.5 rounded-xl text-xs font-black text-slate-700 cursor-pointer transition-all flex items-center gap-1.5 focus-within:ring-2 focus-within:ring-amber-300">
+                      <Upload className="w-3.5 h-3.5 text-slate-600" />
+                      <span>TẢI FILE (.MP3/.WAV)</span>
+                      <input
+                        type="file"
+                        accept="audio/mp3,audio/wav,audio/mpeg,audio/x-wav"
+                        onChange={(e) => handleCustomSoundUpload(e, 'victory')}
+                        className="hidden"
+                      />
+                    </label>
+
+                    {customSounds.victory && (
+                      <button
+                        type="button"
+                        onClick={() => handleClearCustomSound('victory')}
+                        className="p-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-700 rounded-xl border border-rose-250 transition-all flex items-center justify-center cursor-pointer active:scale-95 outline-none"
+                        title="Xóa âm thanh này"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -1664,7 +2102,7 @@ export default function TeacherPortal({
         )}
 
         {/* Thêm bài học mới block */}
-        {activeTopic && activePortalTab !== 'cloud' && (
+        {activeTopic && activePortalTab !== 'cloud' && activePortalTab !== 'settings' && (
           <div className="mb-10 bg-indigo-50/40 border-2 border-indigo-100 rounded-[32px] p-6">
             <h4 className="text-xs font-black text-indigo-950 uppercase tracking-widest flex items-center gap-2 mb-4 font-sans">
               <Sparkles className="w-4 h-4 text-indigo-600 animate-pulse" />

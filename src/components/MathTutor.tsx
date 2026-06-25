@@ -1,54 +1,35 @@
 import React, { useState, useEffect } from 'react';
-import { Sparkles, Star, CheckCircle, ArrowRight } from 'lucide-react';
+import { Sparkles, Star, CheckCircle, ArrowRight, Volume2 } from 'lucide-react';
 import { LessonItem } from '../types';
-import { MathLibraryItem, getMathIllustrations } from '../utils/mathLibraryHelper';
+import { MathLibraryItem, getMathIllustrations, getCustomSounds } from '../utils/mathLibraryHelper';
+import { playVietnameseText, playSoundEffect } from '../utils/audioHelper';
 
-// Simple fun audio paths reused from the rest of the app if possible, or just synthetic beeps
-const playSoundEffect = (type: 'pop' | 'success' | 'click' | 'wrong') => {
-  try {
-    const context = new (window.AudioContext || (window as any).webkitAudioContext)();
-    const osc = context.createOscillator();
-    const gainNode = context.createGain();
+function speakEquation(expression: string) {
+  const cleanExp = expression.trim();
+  const parts = cleanExp.split(/\s+/);
+  if (parts.length === 3) {
+    const a = parts[0];
+    const op = parts[1];
+    const b = parts[2];
     
-    osc.connect(gainNode);
-    gainNode.connect(context.destination);
+    let opWord = 'cộng';
+    if (op === '-') opWord = 'trừ';
+    if (op === '*' || op === 'x' || op === '×') opWord = 'nhân';
+    if (op === '/' || op === '÷') opWord = 'chia';
     
-    if (type === 'pop') {
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(300, context.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(800, context.currentTime + 0.1);
-      gainNode.gain.setValueAtTime(0.5, context.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 0.1);
-      osc.start(context.currentTime);
-      osc.stop(context.currentTime + 0.1);
-    } else if (type === 'success') {
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(600, context.currentTime);
-      osc.frequency.setValueAtTime(800, context.currentTime + 0.1);
-      osc.frequency.setValueAtTime(1200, context.currentTime + 0.2);
-      gainNode.gain.setValueAtTime(0.5, context.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 0.4);
-      osc.start(context.currentTime);
-      osc.stop(context.currentTime + 0.4);
-    } else if (type === 'click') {
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(500, context.currentTime);
-      gainNode.gain.setValueAtTime(0.5, context.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 0.05);
-      osc.start(context.currentTime);
-      osc.stop(context.currentTime + 0.05);
-    } else if (type === 'wrong') {
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(150, context.currentTime);
-      gainNode.gain.setValueAtTime(0.5, context.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 0.2);
-      osc.start(context.currentTime);
-      osc.stop(context.currentTime + 0.2);
-    }
-  } catch (err) {
-    console.log("AudioContext blocked or unvailable");
+    const sentence = `${a} ${opWord} ${b} bằng mấy hả bé?`;
+    playVietnameseText(sentence);
+  } else {
+    const spoken = cleanExp.replace(/\+/g, ' cộng ')
+                           .replace(/-/g, ' trừ ')
+                           .replace(/\*/g, ' nhân ')
+                           .replace(/x/g, ' nhân ')
+                           .replace(/\//g, ' chia ')
+                           .replace(/÷/g, ' chia ');
+    playVietnameseText(`${spoken} bằng mấy hả bé?`);
   }
-};
+}
+
 
 interface VisualMathIllustrationProps {
   a: number;
@@ -364,6 +345,21 @@ export function MathTutor({ item, onCompleted }: MathTutorProps) {
   const [wrongAnswers, setWrongAnswers] = useState<Record<number, number[]>>({});
   const [assignedIllustrations, setAssignedIllustrations] = useState<MathLibraryItem[]>([]);
 
+  // Trigger pop sound when a new equation loads
+  useEffect(() => {
+    if (!completed && operations.length > 0) {
+      playSoundEffect('pop');
+    }
+  }, [currentIndex, completed, operations.length]);
+
+  // Congratulatory/victory sound & speech synthesis message when completes all 5 operations
+  useEffect(() => {
+    if (completed) {
+      playSoundEffect('victory');
+      playVietnameseText("Chúc mừng bé yêu đã giải xuất sắc toàn bộ phép tính của bài học hôm nay! Bé thật là giỏi!");
+    }
+  }, [completed]);
+
   useEffect(() => {
     setCurrentIndex(0);
     setCompleted(false);
@@ -451,19 +447,19 @@ export function MathTutor({ item, onCompleted }: MathTutorProps) {
 
   const handleOptionClick = (val: number) => {
     if (val === currentOp.correctAnswer) {
-      playSoundEffect('pop');
+      // Play beautiful custom clapping sound
+      playSoundEffect('clapping');
       if (currentIndex < operations.length - 1) {
         setTimeout(() => {
-            playSoundEffect('success');
             setCurrentIndex(currentIndex + 1);
-        }, 300);
+        }, 800);
       } else {
         setTimeout(() => {
-          playSoundEffect('success');
           setCompleted(true);
-        }, 300);
+        }, 800);
       }
     } else {
+      // Play funny "tè" buzz sound 
       playSoundEffect('wrong');
       setWrongAnswers(prev => ({
         ...prev,
@@ -493,9 +489,22 @@ export function MathTutor({ item, onCompleted }: MathTutorProps) {
         </div>
 
         <div className="bg-slate-50 border-2 border-slate-200 rounded-[32px] p-8 max-w-2xl mx-auto shadow-sm min-h-[220px] flex flex-col items-center justify-center w-full">
-            <h2 className="text-6xl md:text-7xl font-black text-slate-800 tracking-wider">
-               {displayExpression} = ?
-            </h2>
+            <div className="flex flex-row items-center justify-center gap-4 mb-4">
+              <h2 className="text-6xl md:text-7xl font-black text-slate-800 tracking-wider">
+                 {displayExpression} = ?
+              </h2>
+              <button
+                id="btn-speak-equation"
+                onClick={() => {
+                  playSoundEffect('click');
+                  speakEquation(currentOp.expression);
+                }}
+                className="bg-amber-100 hover:bg-amber-200 text-amber-700 p-4 rounded-full border-2 border-amber-300 transition-all cursor-pointer shadow-xs shrink-0 flex items-center justify-center hover:scale-115 active:scale-95 group"
+                title="Nghe đọc phép tính"
+              >
+                <Volume2 className="w-8 h-8 group-hover:scale-110 transition-transform" />
+              </button>
+            </div>
             <VisualMathIllustration 
               a={aVal} 
               op={opStr} 

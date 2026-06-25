@@ -12,7 +12,8 @@ import SongsRoom from './components/SongsRoom';
 import { playSoundEffect, playVietnameseText } from './utils/audioHelper';
 import * as LucideIcons from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { getMathIllustrations, saveMathIllustrations } from './utils/mathLibraryHelper';
+import { getMathIllustrations, saveMathIllustrations, getCustomSounds, saveCustomSounds } from './utils/mathLibraryHelper';
+import { syncDataToFirebase, loadDataFromFirebase } from './utils/firebaseHelper';
 
 // Default user stats initialization
 const DEFAULT_STATS: UserStats = {
@@ -157,6 +158,54 @@ export default function App() {
       localStorage.removeItem('be_hoc_tieng_viet_overrides_v2');
     } catch (e) {
       console.error("Localstorage removal error for syllabus reset", e);
+    }
+  };
+
+  const handleFirebaseBackup = async () => {
+    try {
+      const data = {
+        userStats,
+        overrides,
+        customTopics,
+        showFunFact,
+        mathLibrary: getMathIllustrations(),
+        customSounds: getCustomSounds(),
+        farmApples: localStorage.getItem('be_hoc_tieng_viet_farm_apples')
+      };
+      return await syncDataToFirebase(data);
+    } catch (error) {
+      console.error("Firebase backup error", error);
+      return false;
+    }
+  };
+
+  const handleFirebaseRestore = async () => {
+    try {
+      const data = await loadDataFromFirebase();
+      if (!data) return false;
+      
+      if (data.userStats) saveStats(data.userStats);
+      if (data.overrides) handleSaveOverrides(data.overrides);
+      if (data.customTopics) handleSaveCustomTopics(data.customTopics);
+      if (data.showFunFact !== undefined) handleToggleFunFact(data.showFunFact);
+      
+      if (data.mathLibrary) {
+        saveMathIllustrations(data.mathLibrary);
+        window.dispatchEvent(new Event('math-library-updated'));
+      }
+      
+      if (data.customSounds) {
+        saveCustomSounds(data.customSounds);
+      }
+      
+      if (data.farmApples !== undefined && data.farmApples !== null) {
+        localStorage.setItem('be_hoc_tieng_viet_farm_apples', data.farmApples);
+      }
+      
+      return true;
+    } catch (error) {
+      console.error("Firebase restore error", error);
+      return false;
     }
   };
 
@@ -491,6 +540,8 @@ export default function App() {
                   onBackToDashboard={() => setCurrentView('dashboard')}
                   showFunFact={showFunFact}
                   onToggleFunFact={handleToggleFunFact}
+                  onFirebaseBackup={handleFirebaseBackup}
+                  onFirebaseRestore={handleFirebaseRestore}
                 />
               </motion.div>
             )}

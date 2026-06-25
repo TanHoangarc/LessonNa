@@ -1,3 +1,5 @@
+import { getCustomSounds } from './mathLibraryHelper';
+
 /**
  * Helper to play Vietnamese Text-to-Speech natively in the browser.
  * Adjusts rate and pitch to sound cute, slow, and easy to follow for children aged 4-6.
@@ -154,11 +156,65 @@ const fallbackSpeechSynthesis = (
 
 /**
  * Triggers a cute audio success or fail sound effect using standard Web Audio API synth
- * so we do not have to rely on external MP3 assets which might fail to fetch.
+ * so we do not have to rely on external MP3 assets which might fail to fetch. Supports
+ * global custom parent/teacher audio assets with synthetic fallbacks.
  */
-export const playSoundEffect = (type: 'success' | 'click' | 'victory' | 'pop' | 'wrong') => {
+export const playSoundEffect = (type: 'success' | 'click' | 'victory' | 'pop' | 'wrong' | 'clapping') => {
   try {
+    // Try custom uploaded sound effects first
+    const custom = getCustomSounds();
+    if ((type === 'clapping' || type === 'success') && custom.clapping) {
+      new Audio(custom.clapping).play().catch(() => {});
+      return;
+    }
+    if (type === 'wrong' && custom.wrong) {
+      new Audio(custom.wrong).play().catch(() => {});
+      return;
+    }
+    if (type === 'victory' && custom.victory) {
+      new Audio(custom.victory).play().catch(() => {});
+      return;
+    }
+
     const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+
+    if (type === 'clapping') {
+      // Clapping synthesis: 7 rapid cute pop/clap bursts with high pitch offsets
+      for (let i = 0; i < 7; i++) {
+        const delay = i * 0.08 + Math.random() * 0.03;
+        const oNode = audioCtx.createOscillator();
+        const gNode = audioCtx.createGain();
+        oNode.connect(gNode);
+        gNode.connect(audioCtx.destination);
+        
+        oNode.type = 'triangle';
+        oNode.frequency.setValueAtTime(320 + Math.random() * 280, audioCtx.currentTime + delay);
+        
+        gNode.gain.setValueAtTime(0, audioCtx.currentTime + delay);
+        gNode.gain.linearRampToValueAtTime(0.22, audioCtx.currentTime + delay + 0.01);
+        gNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + delay + 0.05);
+        
+        oNode.start(audioCtx.currentTime + delay);
+        oNode.stop(audioCtx.currentTime + delay + 0.06);
+      }
+      
+      // Joyful correct option arpeggio on top
+      const notes = [523.25, 659.25, 783.99, 1046.50];
+      notes.forEach((freq, idx) => {
+        const oNode = audioCtx.createOscillator();
+        const gNode = audioCtx.createGain();
+        oNode.connect(gNode);
+        gNode.connect(audioCtx.destination);
+        oNode.type = 'sine';
+        oNode.frequency.setValueAtTime(freq, audioCtx.currentTime + idx * 0.10);
+        gNode.gain.setValueAtTime(0.12, audioCtx.currentTime + idx * 0.10);
+        gNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + idx * 0.10 + 0.22);
+        oNode.start(audioCtx.currentTime + idx * 0.10);
+        oNode.stop(audioCtx.currentTime + idx * 0.10 + 0.22);
+      });
+      return;
+    }
+
     const osc = audioCtx.createOscillator();
     const gainNode = audioCtx.createGain();
 
@@ -207,14 +263,15 @@ export const playSoundEffect = (type: 'success' | 'click' | 'victory' | 'pop' | 
       osc.start();
       osc.stop(audioCtx.currentTime + 0.15);
     } else if (type === 'wrong') {
-      // Clean cute warning sound - Double beep down-pitch
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(220, audioCtx.currentTime); // A3
-      osc.frequency.setValueAtTime(165, audioCtx.currentTime + 0.15); // E3
-      gainNode.gain.setValueAtTime(0.25, audioCtx.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.35);
+      // Clean cute warning sound - Double beep down-pitch (or customizable low sawtooth buzz "tè")
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(135, audioCtx.currentTime); // Low buzz start
+      osc.frequency.linearRampToValueAtTime(95, audioCtx.currentTime + 0.4); // sloping down to sound like "tè"
+      gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+      gainNode.gain.linearRampToValueAtTime(0.35, audioCtx.currentTime + 0.05); // sharp attack
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4); // cute trailing decay
       osc.start();
-      osc.stop(audioCtx.currentTime + 0.35);
+      osc.stop(audioCtx.currentTime + 0.4);
     }
   } catch (err) {
     console.error("Audio Synthesis error:", err);
