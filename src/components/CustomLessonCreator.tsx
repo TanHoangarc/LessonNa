@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { playSoundEffect, playVietnameseText } from '../utils/audioHelper';
+import { compressImage } from '../utils/mathLibraryHelper';
 import { LessonItem } from '../types';
 
 interface CustomLessonCreatorProps {
@@ -108,12 +109,12 @@ export default function CustomLessonCreator({
     }
 
     try {
-      const base64Str = await fileToBase64(file);
+      const base64Str = await compressImage(file, 400, 400);
       setCustomImage(base64Str);
       setCustomImageName(file.name);
       playSoundEffect('success');
     } catch (e) {
-      console.error("Image base64 conversion failed", e);
+      console.error("Image compression failed", e);
     }
   };
 
@@ -185,11 +186,11 @@ export default function CustomLessonCreator({
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       setTutorMicStream(stream);
 
-      let options = { mimeType: 'audio/webm' };
+      let options: MediaRecorderOptions = { mimeType: 'audio/webm', audioBitsPerSecond: 16000 };
       if (!MediaRecorder.isTypeSupported('audio/webm')) {
-        options = { mimeType: 'audio/mp4' };
+        options = { mimeType: 'audio/mp4', audioBitsPerSecond: 16000 };
         if (!MediaRecorder.isTypeSupported('audio/mp4')) {
-          options = { mimeType: '' }; // Fallback
+          options = { mimeType: '', audioBitsPerSecond: 16000 }; // Fallback
         }
       }
 

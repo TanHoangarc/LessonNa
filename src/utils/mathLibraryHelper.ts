@@ -59,8 +59,11 @@ export function saveMathIllustrations(items: MathLibraryItem[]) {
     // Dispatch local storage change event so other components sync instantly
     window.dispatchEvent(new Event('storage'));
     window.dispatchEvent(new CustomEvent('math-library-updated'));
-  } catch (e) {
+  } catch (e: any) {
     console.error("Failed to save math illustrations", e);
+    if (e.name === 'QuotaExceededError') {
+      alert("⚠️ Bộ nhớ thiết bị đã đầy! Vui lòng xóa bớt một số hình vẽ Toán học.");
+    }
   }
 }
 
@@ -96,8 +99,8 @@ export function compressImage(file: File, maxWidth: number = 256, maxHeight: num
         ctx.drawImage(img, 0, 0, width, height);
 
         try {
-          // Standard transparent PNG at 256x256 is extremely lightweight 
-          const dataUrl = canvas.toDataURL('image/png');
+          // Compress using WebP or JPEG format to heavily reduce size
+          const dataUrl = canvas.toDataURL('image/webp', 0.6);
           resolve(dataUrl);
         } catch (err) {
           resolve(e.target?.result as string); // fallback to raw base64

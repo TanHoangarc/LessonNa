@@ -134,8 +134,11 @@ export default function App() {
     setOverrides(newOverrides);
     try {
       localStorage.setItem('be_hoc_tieng_viet_overrides_v2', JSON.stringify(newOverrides));
-    } catch (e) {
+    } catch (e: any) {
       console.error("Localstorage save overrides error", e);
+      if (e.name === 'QuotaExceededError') {
+        alert("⚠️ Bộ nhớ trình duyệt đã đầy! Ba mẹ vui lòng xóa bớt hình ảnh/âm thanh tùy chỉnh trong phần 'Tự Soạn Giáo Án' nhé.");
+      }
     }
   };
 
@@ -144,8 +147,11 @@ export default function App() {
     setCustomTopics(newTopics);
     try {
       localStorage.setItem('be_hoc_tieng_viet_custom_topics_v2', JSON.stringify(newTopics));
-    } catch (e) {
+    } catch (e: any) {
       console.error("Localstorage save custom topics error", e);
+      if (e.name === 'QuotaExceededError') {
+        alert("⚠️ Bộ nhớ trình duyệt đã đầy! Ba mẹ vui lòng xóa bớt bài học tự tạo trong phần 'Tự Soạn Giáo Án' nhé.");
+      }
     }
   };
 

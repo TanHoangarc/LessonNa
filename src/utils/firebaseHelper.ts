@@ -44,10 +44,12 @@ export const syncDataToFirebase = async (data: Omit<AppDataSync, 'updatedAt'>): 
   
   try {
     const userDocRef = doc(db, 'users', auth.currentUser.uid);
-    await setDoc(userDocRef, {
+    // Use JSON parse/stringify to cleanly remove any `undefined` values which Firestore does not support
+    const sanitizedData = JSON.parse(JSON.stringify({
       ...data,
       updatedAt: Date.now()
-    });
+    }));
+    await setDoc(userDocRef, sanitizedData);
     return true;
   } catch (error) {
     console.error("Lỗi đồng bộ lên Firebase:", error);

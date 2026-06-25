@@ -581,11 +581,11 @@ export default function TeacherPortal({
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       setMicStream(stream);
 
-      let options = { mimeType: 'audio/webm' };
+      let options: MediaRecorderOptions = { mimeType: 'audio/webm', audioBitsPerSecond: 16000 };
       if (!MediaRecorder.isTypeSupported('audio/webm')) {
-        options = { mimeType: 'audio/mp4' };
+        options = { mimeType: 'audio/mp4', audioBitsPerSecond: 16000 };
         if (!MediaRecorder.isTypeSupported('audio/mp4')) {
-          options = { mimeType: '' }; // fallback to default browser format
+          options = { mimeType: '', audioBitsPerSecond: 16000 }; // fallback to default browser format
         }
       }
 
@@ -2367,7 +2367,7 @@ export default function TeacherPortal({
                                 return;
                               }
                               try {
-                                const base64Str = await fileToBase64(file);
+                                const base64Str = await compressImage(file, 400, 400);
                                 setNewCustomImage(base64Str);
                                 setNewCustomImageName(file.name);
                                 playSoundEffect('success');
