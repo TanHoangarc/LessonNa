@@ -132,7 +132,7 @@ export default function TeacherPortal({
 
   // Active Tab state for Teacher Portal
   const [activePortalTab, setActivePortalTab] = useState<
-    "sentence" | "spelling" | "math" | "cloud" | "settings" | "jigsaw"
+    "sentence" | "spelling" | "math" | "cloud" | "settings" | "jigsaw" | "matching"
   >("sentence");
 
   // Local state for key updates
@@ -216,12 +216,23 @@ export default function TeacherPortal({
   const [customCols, setCustomCols] = useState<number>(3);
   const [customRows, setCustomRows] = useState<number>(3);
 
-  // Load puzzles on mount
+  // Matching Game Management State
+  const [matchingGames, setMatchingGames] = useState<any[]>([]);
+  const [editingMatchingGame, setEditingMatchingGame] = useState<any | null>(null);
+  const [newMatchingGameName, setNewMatchingGameName] = useState<string>("Bài nối hình 1");
+  const [newMatchingPairs, setNewMatchingPairs] = useState<any[]>([{ id: 'pair-1', imageUrl: '', text: '', audioUrl: '' }]);
+  const matchingFileInputRef = useRef<HTMLInputElement>(null);
+  const matchingAudioFileInputRef = useRef<HTMLInputElement>(null);
+  const [activeMatchingPairId, setActiveMatchingPairId] = useState<string>('');
+  const [activeMatchingAudioPairId, setActiveMatchingAudioPairId] = useState<string>('');
+
+  // Load puzzles and matching games on mount
   useEffect(() => {
     const saved = localStorage.getItem("be_hoc_tieng_viet_custom_puzzles");
     const savedHidden = localStorage.getItem(
       "be_hoc_tieng_viet_hidden_puzzles",
     );
+    const savedMatching = localStorage.getItem("be_hoc_tieng_viet_matching_games");
     if (saved) {
       try {
         setCustomPuzzles(JSON.parse(saved));
@@ -232,7 +243,22 @@ export default function TeacherPortal({
         setHiddenPuzzles(JSON.parse(savedHidden));
       } catch (e) {}
     }
+    if (savedMatching) {
+      try {
+        setMatchingGames(JSON.parse(savedMatching));
+      } catch (e) {}
+    }
   }, []);
+
+  const saveMatchingGames = (games: any[]) => {
+    try {
+      localStorage.setItem("be_hoc_tieng_viet_matching_games", JSON.stringify(games));
+      setMatchingGames(games);
+    } catch (e) {
+      console.error(e);
+      alert("Bộ nhớ đã đầy, không thể lưu thêm trò chơi nối hình. Vui lòng xóa bớt.");
+    }
+  };
 
   const saveCustomPuzzles = (puzzles: any[]) => {
     try {
@@ -308,6 +334,101 @@ export default function TeacherPortal({
     };
     reader.readAsDataURL(file);
     if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handleMatchingImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const MAX_WIDTH = 300;
+        const MAX_HEIGHT = 300;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+        } else {
+          if (height > MAX_HEIGHT) {
+            width *= MAX_HEIGHT / height;
+            height = MAX_HEIGHT;
+          }
+        }
+        
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressedBase64 = canvas.toDataURL("image/jpeg", 0.6);
+          
+          setNewMatchingPairs(prev => prev.map(p => p.id === activeMatchingPairId ? { ...p, imageUrl: compressedBase64 } : p));
+        }
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+    if (matchingFileInputRef.current) matchingFileInputRef.current.value = "";
+  };
+
+  const handleMatchingAudioUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const audioDataUrl = event.target?.result as string;
+      setNewMatchingPairs(prev => prev.map(p => p.id === activeMatchingAudioPairId ? { ...p, audioUrl: audioDataUrl } : p));
+    };
+    reader.readAsDataURL(file);
+    if (matchingAudioFileInputRef.current) matchingAudioFileInputRef.current.value = "";
+  };
+
+  const handleSaveMatchingGame = () => {
+    if (!newMatchingGameName.trim()) {
+      alert("Vui lòng nhập tên bài nối hình!");
+      return;
+    }
+    const validPairs = newMatchingPairs.filter(p => p.imageUrl && p.text.trim());
+    if (validPairs.length < 2) {
+      alert("Vui lòng nhập ít nhất 2 cặp hình và tên hợp lệ!");
+      return;
+    }
+
+    if (editingMatchingGame) {
+      const updatedGames = matchingGames.map(g => g.id === editingMatchingGame.id ? {
+        ...g,
+        name: newMatchingGameName,
+        pairs: validPairs
+      } : g);
+      saveMatchingGames(updatedGames);
+      setEditingMatchingGame(null);
+    } else {
+      const newGame = {
+        id: `matching-${Date.now()}`,
+        name: newMatchingGameName,
+        pairs: validPairs
+      };
+      saveMatchingGames([...matchingGames, newGame]);
+    }
+    
+    setNewMatchingGameName("Bài nối hình " + (matchingGames.length + 2));
+    setNewMatchingPairs([{ id: `pair-${Date.now()}-1`, imageUrl: '', text: '', audioUrl: '' }]);
+    playSoundEffect("success");
+  };
+
+  const handleDeleteMatchingGame = (id: string) => {
+    if (window.confirm("Thầy cô/Ba mẹ có chắc muốn xóa bài nối hình này không?")) {
+      saveMatchingGames(matchingGames.filter(g => g.id !== id));
+      playSoundEffect("wrong");
+    }
   };
 
   const handleDeleteCustomPuzzle = (id: string) => {
@@ -1395,24 +1516,6 @@ export default function TeacherPortal({
           <button
             onClick={() => {
               playSoundEffect("click");
-              setActivePortalTab("cloud");
-              setIsCreatingTopic(false);
-              setIsCreatingSpelling(false);
-              setIsCreatingMathTopic(false);
-            }}
-            className={`flex-1 min-w-[120px] py-3 text-xs font-black rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer outline-none ${
-              activePortalTab === "cloud"
-                ? "bg-amber-500 text-white shadow-md border-b-2 border-amber-700"
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
-            }`}
-          >
-            <Database className="w-4 h-4" />
-            <span className="uppercase">5. Sao lưu & Khôi phục</span>
-          </button>
-
-          <button
-            onClick={() => {
-              playSoundEffect("click");
               setActivePortalTab("jigsaw");
               setIsCreatingTopic(false);
               setIsCreatingSpelling(false);
@@ -1431,6 +1534,42 @@ export default function TeacherPortal({
           <button
             onClick={() => {
               playSoundEffect("click");
+              setActivePortalTab("matching");
+              setIsCreatingTopic(false);
+              setIsCreatingSpelling(false);
+              setIsCreatingMathTopic(false);
+            }}
+            className={`flex-1 min-w-[120px] py-3 text-xs font-black rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer outline-none ${
+              activePortalTab === "matching"
+                ? "bg-purple-600 text-white shadow-md border-b-2 border-purple-800"
+                : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+            }`}
+          >
+            <span className="text-sm">🔗</span>
+            <span className="uppercase">5. Nối hình</span>
+          </button>
+
+          <button
+            onClick={() => {
+              playSoundEffect("click");
+              setActivePortalTab("cloud");
+              setIsCreatingTopic(false);
+              setIsCreatingSpelling(false);
+              setIsCreatingMathTopic(false);
+            }}
+            className={`flex-1 min-w-[120px] py-3 text-xs font-black rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer outline-none ${
+              activePortalTab === "cloud"
+                ? "bg-amber-500 text-white shadow-md border-b-2 border-amber-700"
+                : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+            }`}
+          >
+            <Database className="w-4 h-4" />
+            <span className="uppercase">6. Sao lưu & Khôi phục</span>
+          </button>
+
+          <button
+            onClick={() => {
+              playSoundEffect("click");
               setActivePortalTab("settings");
               setIsCreatingTopic(false);
               setIsCreatingSpelling(false);
@@ -1443,7 +1582,7 @@ export default function TeacherPortal({
             }`}
           >
             <Sliders className="w-4 h-4" />
-            <span className="uppercase">6. Thiết lập</span>
+            <span className="uppercase">7. Thiết lập</span>
           </button>
         </div>
 
@@ -1938,6 +2077,169 @@ export default function TeacherPortal({
                     </div>
                   );
                 })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MATCHING GAME WORKSPACE */}
+        {activePortalTab === "matching" && (
+          <div className="space-y-6 animate-fade-in font-sans">
+            <div className="bg-gradient-to-r from-purple-50 to-indigo-50 border-2 border-purple-200 rounded-[32px] p-6 md:p-8 space-y-6 shadow-xs">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-purple-100 pb-5">
+                <div>
+                  <h3 className="text-lg font-black text-purple-950 uppercase tracking-tight flex items-center gap-2">
+                    <span className="text-xl">🔗</span>
+                    <span>QUẢN LÝ TRÒ CHƠI NỐI HÌNH</span>
+                  </h3>
+                  <p className="text-xs text-purple-900 font-medium mt-1">
+                    Ba mẹ có thể tạo bài nối hình với nhiều cặp hình và từ. Bé sẽ vẽ đường nối để khớp.
+                  </p>
+                </div>
+              </div>
+
+              {/* Add / Edit Matching Game */}
+              <div className="bg-white border-2 border-purple-200 rounded-2xl p-6 shadow-sm">
+                <h4 className="text-sm font-black text-slate-800 mb-4">
+                  {editingMatchingGame ? "Chỉnh sửa trò chơi nối hình" : "Thêm trò chơi nối hình mới"}
+                </h4>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-black text-slate-500 mb-2">TÊN BÀI HỌC:</label>
+                    <input
+                      type="text"
+                      value={newMatchingGameName}
+                      onChange={e => setNewMatchingGameName(e.target.value)}
+                      className="w-full border-2 border-slate-200 rounded-xl p-3 text-sm focus:border-purple-500 focus:ring-4 focus:ring-purple-500/20 outline-none"
+                    />
+                  </div>
+
+                  <div className="space-y-3">
+                    <label className="block text-xs font-black text-slate-500">CÁC CẶP HÌNH & TỪ:</label>
+                    {newMatchingPairs.map((pair, index) => (
+                      <div key={pair.id} className="flex flex-wrap sm:flex-nowrap items-center gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200 relative">
+                        <div className="w-16 h-16 shrink-0 bg-white border-2 border-slate-200 border-dashed rounded-lg flex items-center justify-center overflow-hidden cursor-pointer hover:bg-slate-100 transition-colors"
+                             onClick={() => {
+                               setActiveMatchingPairId(pair.id);
+                               matchingFileInputRef.current?.click();
+                             }}>
+                          {pair.imageUrl ? (
+                            <img src={pair.imageUrl} alt="Pair" className="w-full h-full object-cover" />
+                          ) : (
+                            <ImagePlus className="w-6 h-6 text-slate-400" />
+                          )}
+                        </div>
+                        <input
+                          type="text"
+                          placeholder="Từ tương ứng (VD: Quả Táo)"
+                          value={pair.text}
+                          onChange={e => setNewMatchingPairs(prev => prev.map(p => p.id === pair.id ? { ...p, text: e.target.value } : p))}
+                          className="flex-1 min-w-[150px] border-2 border-slate-200 rounded-xl p-3 text-sm focus:border-purple-500 focus:ring-4 focus:ring-purple-500/20 outline-none"
+                        />
+                        <button
+                          onClick={() => {
+                            setActiveMatchingAudioPairId(pair.id);
+                            matchingAudioFileInputRef.current?.click();
+                          }}
+                          className={`w-12 h-12 shrink-0 flex items-center justify-center rounded-xl border-2 transition-colors ${
+                            pair.audioUrl
+                              ? "bg-emerald-50 border-emerald-200 text-emerald-600"
+                              : "bg-white border-slate-200 text-slate-400 hover:bg-slate-50"
+                          }`}
+                          title="Thêm âm thanh phát âm"
+                        >
+                          <Volume2 className="w-5 h-5" />
+                        </button>
+                        {newMatchingPairs.length > 1 && (
+                          <button
+                            onClick={() => setNewMatchingPairs(prev => prev.filter(p => p.id !== pair.id))}
+                            className="w-10 h-10 shrink-0 flex items-center justify-center rounded-xl bg-rose-50 text-rose-500 hover:bg-rose-100"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    <button
+                      onClick={() => setNewMatchingPairs(prev => [...prev, { id: `pair-${Date.now()}-${prev.length}`, imageUrl: '', text: '', audioUrl: '' }])}
+                      className="w-full py-3 rounded-xl border-2 border-dashed border-purple-300 text-purple-600 font-black text-xs hover:bg-purple-50 transition-colors"
+                    >
+                      + THÊM CẶP TỪ
+                    </button>
+                  </div>
+
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    ref={matchingFileInputRef}
+                    onChange={handleMatchingImageUpload}
+                  />
+
+                  <input
+                    type="file"
+                    accept="audio/*"
+                    className="hidden"
+                    ref={matchingAudioFileInputRef}
+                    onChange={handleMatchingAudioUpload}
+                  />
+
+                  <div className="flex gap-3 pt-2">
+                    <button
+                      onClick={handleSaveMatchingGame}
+                      className="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-black text-sm py-3.5 rounded-xl shadow-md transition-colors"
+                    >
+                      {editingMatchingGame ? "CẬP NHẬT TRÒ CHƠI" : "LƯU TRÒ CHƠI MỚI"}
+                    </button>
+                    {editingMatchingGame && (
+                      <button
+                        onClick={() => {
+                          setEditingMatchingGame(null);
+                          setNewMatchingGameName("Bài nối hình " + (matchingGames.length + 1));
+                          setNewMatchingPairs([{ id: `pair-${Date.now()}-1`, imageUrl: '', text: '', audioUrl: '' }]);
+                        }}
+                        className="w-32 bg-slate-200 hover:bg-slate-300 text-slate-700 font-black text-sm py-3.5 rounded-xl transition-colors"
+                      >
+                        HỦY
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* List Matching Games */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 mt-6">
+                {matchingGames.map((game) => (
+                  <div key={game.id} className="bg-white rounded-2xl p-4 border-2 border-slate-200 flex flex-col items-center text-center shadow-sm relative group">
+                    <div className="w-16 h-16 rounded-full bg-purple-100 flex items-center justify-center mb-3">
+                      <span className="text-2xl">🔗</span>
+                    </div>
+                    <span className="block text-sm font-black text-slate-800 mb-1">
+                      {game.name}
+                    </span>
+                    <span className="text-xs text-slate-500 mb-4">{game.pairs.length} cặp hình & chữ</span>
+                    
+                    <div className="flex w-full gap-2 mt-auto">
+                      <button
+                        onClick={() => {
+                          setEditingMatchingGame(game);
+                          setNewMatchingGameName(game.name);
+                          setNewMatchingPairs(game.pairs);
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
+                        className="flex-1 text-[10px] font-black uppercase py-2 rounded-xl bg-purple-50 text-purple-600 hover:bg-purple-100 flex items-center justify-center gap-1 transition-colors"
+                      >
+                        SỬA
+                      </button>
+                      <button
+                        onClick={() => handleDeleteMatchingGame(game.id)}
+                        className="flex-1 text-[10px] font-black uppercase py-2 rounded-xl bg-rose-50 text-rose-600 hover:bg-rose-100 flex items-center justify-center gap-1 transition-colors"
+                      >
+                        XÓA
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>

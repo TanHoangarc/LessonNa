@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as LucideIcons from 'lucide-react';
-import { playSoundEffect, playVietnameseText } from '../utils/audioHelper';
+import { playSoundEffect } from '../utils/audioHelper';
 
 interface SongsRoomProps {
   onBackToDashboard: () => void;
@@ -69,11 +69,24 @@ export default function SongsRoom({
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [activeLyricIndex, setActiveLyricIndex] = useState<number>(0);
   const [songProgress, setSongProgress] = useState<number>(0);
+  const [customAudioUrls, setCustomAudioUrls] = useState<Record<string, string>>({});
 
   const selectedSong = CHILDREN_SONGS.find(s => s.id === selectedSongId) || CHILDREN_SONGS[0];
 
-  const playTimerRef = useRef<any>(null);
-  const audioIntervalRef = useRef<any>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Load saved audio
+  useEffect(() => {
+    const urls: Record<string, string> = {};
+    CHILDREN_SONGS.forEach(song => {
+      try {
+        const saved = localStorage.getItem(`be_hoc_tieng_viet_song_audio_${song.id}`);
+        if (saved) urls[song.id] = saved;
+      } catch (e) {}
+    });
+    setCustomAudioUrls(urls);
+  }, []);
 
   // Clean up timers on unmount
   useEffect(() => {
@@ -82,46 +95,71 @@ export default function SongsRoom({
     };
   }, []);
 
+  const handleAudioUpload = (e: React.ChangeEvent<HTMLInputElement>, songId: string) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const audioDataUrl = event.target?.result as string;
+      setCustomAudioUrls(prev => ({ ...prev, [songId]: audioDataUrl }));
+      try {
+        localStorage.setItem(`be_hoc_tieng_viet_song_audio_${songId}`, audioDataUrl);
+      } catch (err) {
+        console.error("Storage limit reached");
+      }
+    };
+    reader.readAsDataURL(file);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
   const startPlayback = () => {
     stopPlayback();
     playSoundEffect('click');
+
+    const customUrl = customAudioUrls[selectedSong.id];
+    if (!customUrl) {
+      alert("Vui lòng tải lên file âm thanh cho bài hát này trước khi hát nhé!");
+      return;
+    }
+
     setIsPlaying(true);
     setActiveLyricIndex(0);
     setSongProgress(0);
 
-    playVietnameseText(`Bé ơi! Chúng mình cùng múa hát rộn ràng bài ca: ${selectedSong.title} nhé!`);
+    const audio = new Audio(customUrl);
+    audioRef.current = audio;
 
-    let currentLine = 0;
-    let progressVal = 0;
-
-    // Simulate lyric highlighting step-by-step
-    playTimerRef.current = setInterval(() => {
-      currentLine = (currentLine + 1) % selectedSong.lyrics.length;
-      setActiveLyricIndex(currentLine);
-      
-      // Speak the current line automatically to make it a REAL sing-along tutorial!
-      playVietnameseText(selectedSong.lyrics[currentLine], accent);
-    }, 4500); // 4.5 seconds per line
-
-    // Progress bar runner
-    audioIntervalRef.current = setInterval(() => {
-      progressVal += 1;
-      setSongProgress(Math.min(progressVal, 100));
-
-      if (progressVal >= 100) {
-        stopPlayback();
-        playSoundEffect('victory');
-        // Earn coins for complete singing!
-        onAwardCoins(10);
-        playVietnameseText("Bé đã khoe giọng hát hay tuyệt vời rồi! Cô tặng bé thêm mười đồng vàng nhé!");
+    audio.ontimeupdate = () => {
+      if (audio.duration) {
+        const progress = (audio.currentTime / audio.duration) * 100;
+        setSongProgress(progress);
+        
+        // Estimate active lyric index
+        const totalLyrics = selectedSong.lyrics.length;
+        const currentIdx = Math.floor((audio.currentTime / audio.duration) * totalLyrics);
+        setActiveLyricIndex(Math.min(currentIdx, totalLyrics - 1));
       }
-    }, 500); // reaches 100 in 50 seconds
+    };
+
+    audio.onended = () => {
+      stopPlayback();
+      playSoundEffect('victory');
+      onAwardCoins(10);
+    };
+
+    audio.play().catch(e => {
+      console.error("Audio play error:", e);
+      setIsPlaying(false);
+    });
   };
 
   const stopPlayback = () => {
     setIsPlaying(false);
-    if (playTimerRef.current) clearInterval(playTimerRef.current);
-    if (audioIntervalRef.current) clearInterval(audioIntervalRef.current);
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
   };
 
   const handleSelectSong = (songId: string) => {
@@ -168,6 +206,7 @@ export default function SongsRoom({
           <div className="flex flex-col gap-3">
             {CHILDREN_SONGS.map((song) => {
               const active = selectedSongId === song.id;
+              const hasAudio = !!customAudioUrls[song.id];
               return (
                 <button
                   key={song.id}
@@ -186,14 +225,21 @@ export default function SongsRoom({
                     </div>
                   </div>
                   
-                  <span className="text-[10px] font-mono opacity-80">{song.duration}</span>
+                  <div className="flex flex-col items-end gap-1">
+                    <span className="text-[10px] font-mono opacity-80">{song.duration}</span>
+                    {hasAudio ? (
+                      <span className="text-[8px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-bold">Đã tải nhạc</span>
+                    ) : (
+                      <span className="text-[8px] bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded font-bold">Chưa có nhạc</span>
+                    )}
+                  </div>
                 </button>
               );
             })}
           </div>
 
           <div className="bg-[#FFFCE4] border border-amber-300 p-4 rounded-2.5xl text-[10.5px] text-[#A0522D] font-extrabold leading-relaxed">
-            🌿 <strong>Bé học bài ca:</strong> Nghe cô giáo phát từng vế chữ của lời nhạc rồi nhẩm hát ríu rít theo nhé! Hát hết bài sẽ được thưởng 🪙 10 đồng vàng óng đấy!
+            🌿 <strong>Lưu ý:</strong> Ba mẹ/Thầy cô cần tải file âm thanh gốc cho bài hát trước khi phát nhé!
           </div>
         </div>
 
@@ -201,8 +247,25 @@ export default function SongsRoom({
         <div className="lg:col-span-8 bg-[#FAFAFD] rounded-3xl p-6 border border-slate-150 flex flex-col items-center justify-between relative min-h-[420px]" id="karaoke-theater">
           
           {/* Deck with spinning record */}
-          <div className="w-full flex flex-col sm:flex-row items-center gap-6 justify-center py-4">
+          <div className="w-full flex flex-col sm:flex-row items-center gap-6 justify-center py-4 relative">
             
+            <div className="absolute right-0 top-0">
+              <input
+                type="file"
+                accept="audio/*"
+                className="hidden"
+                ref={fileInputRef}
+                onChange={(e) => handleAudioUpload(e, selectedSong.id)}
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center gap-1 text-[10px] font-black bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded-lg transition-colors"
+              >
+                <LucideIcons.Upload className="w-3 h-3" />
+                {customAudioUrls[selectedSong.id] ? "ĐỔI NHẠC" : "TẢI NHẠC"}
+              </button>
+            </div>
+
             {/* Spinning Disc vinyl representation */}
             <div className="relative">
               <motion.div 
@@ -234,7 +297,7 @@ export default function SongsRoom({
                 {selectedSong.title}
               </h4>
               <p className="text-xs text-slate-500 font-extrabold font-sans mt-0.5">
-                Sáng tác: {selectedSong.composer} • Giọng chuẩn cô Chích Chòe
+                Sáng tác: {selectedSong.composer}
               </p>
             </div>
 
@@ -273,14 +336,12 @@ export default function SongsRoom({
             
             {/* Progress bar line */}
             <div className="flex-1 w-full flex items-center gap-2.5">
-              <span className="text-[10px] font-mono font-bold text-slate-400">00:00</span>
               <div className="flex-1 h-2 bg-slate-200 rounded-full overflow-hidden relative">
                 <div 
                   className="absolute left-0 top-0 h-full bg-purple-500 rounded-full transition-all duration-300"
                   style={{ width: `${songProgress}%` }}
                 ></div>
               </div>
-              <span className="text-[10px] font-mono font-bold text-slate-400">{selectedSong.duration}</span>
             </div>
 
             {/* Play controls */}

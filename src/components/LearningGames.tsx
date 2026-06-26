@@ -9,7 +9,7 @@ interface LearningGamesProps {
   userStats: UserStats;
   onUpdateStats: (newStats: UserStats) => void;
   onBackToDashboard: () => void;
-  initialGame?: "jigsaw" | "farm";
+  initialGame?: "jigsaw" | "matching";
 }
 
 interface JigsawPiece {
@@ -33,8 +33,8 @@ export default function LearningGames({
   onBackToDashboard,
   initialGame = "jigsaw",
 }: LearningGamesProps) {
-  // Navigation active game tab: 'jigsaw' | 'farm'
-  const [activeGame, setActiveGame] = useState<"jigsaw" | "farm">(initialGame);
+  // Navigation active game tab: 'jigsaw' | 'matching'
+  const [activeGame, setActiveGame] = useState<"jigsaw" | "matching">(initialGame);
 
   const [customPuzzles, setCustomPuzzles] = useState<CustomPuzzle[]>([]);
   const [hiddenPuzzles, setHiddenPuzzles] = useState<string[]>([]);
@@ -210,159 +210,147 @@ export default function LearningGames({
 
 
 
-  // ---------- 🌱 GAME 2: FRUIT TREE FARM SYSTEM ----------
-  // Farm Stages:
-  // 0: Vacant Pot (Đất trống)
-  // 1: Seed planted (Đã gieo hạt giống 🌰)
-  // 2: Sprouted (Nảy mầm xinh 🌱)
-  // 3: Flowering (Ra hoa thơm 🌸)
-  // 4: Fruits ripe (Trĩu quả mọng 🍎)
-  const [plantStage, setPlantStage] = useState<number>(0);
-  const [waterCount, setWaterCount] = useState<number>(0);
-  const [sunlightActive, setSunlightActive] = useState<boolean>(false);
-  const [weedWormActive, setWeedWormActive] = useState<boolean>(false);
-  const [ripeFruitCount, setRipeFruitCount] = useState<number>(0);
-  const [harvestedFruitCount, setHarvestedFruitCount] = useState<number>(() => {
-    try {
-      const saved = localStorage.getItem("be_hoc_tieng_viet_farm_apples");
-      return saved ? parseInt(saved) : 0;
-    } catch (e) {
-      return 0;
+  // ---------- 🔗 GAME 2: MATCHING GAME SYSTEM ----------
+  const [matchingGames, setMatchingGames] = useState<any[]>([]);
+  const [selectedMatchingGameId, setSelectedMatchingGameId] = useState<string>("");
+  const [connectedPairs, setConnectedPairs] = useState<string[]>([]);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [currentLine, setCurrentLine] = useState<{ x1: number, y1: number, x2: number, y2: number } | null>(null);
+  const [drawingStartNode, setDrawingStartNode] = useState<{ id: string, type: 'left' | 'right', x: number, y: number } | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [leftNodes, setLeftNodes] = useState<{ id: string, x: number, y: number }[]>([]);
+  const [rightNodes, setRightNodes] = useState<{ id: string, x: number, y: number }[]>([]);
+  const [matchingGameWon, setMatchingGameWon] = useState(false);
+  const [scrambledLeft, setScrambledLeft] = useState<any[]>([]);
+  const [scrambledRight, setScrambledRight] = useState<any[]>([]);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("be_hoc_tieng_viet_matching_games");
+    if (saved) {
+      try {
+        setMatchingGames(JSON.parse(saved));
+      } catch (e) {}
     }
-  });
+  }, []);
 
-  // Keep upping local apple persistence
-  const saveHarvestedApples = (count: number) => {
-    setHarvestedFruitCount(count);
-    try {
-      localStorage.setItem("be_hoc_tieng_viet_farm_apples", count.toString());
-    } catch (e) {}
+  const startMatchingGame = (gameId: string) => {
+    const game = matchingGames.find(g => g.id === gameId);
+    if (!game) return;
+    
+    setSelectedMatchingGameId(gameId);
+    setConnectedPairs([]);
+    setMatchingGameWon(false);
+    
+    // Scramble left (images) and right (texts) separately
+    const left = [...game.pairs].sort(() => Math.random() - 0.5);
+    const right = [...game.pairs].sort(() => Math.random() - 0.5);
+    
+    setScrambledLeft(left);
+    setScrambledRight(right);
+    playSoundEffect("pop");
   };
 
-  // Sow a new seed
-  const handleSowSeed = () => {
-    if (plantStage > 0) return;
+  const handleTouchStart = (e: React.TouchEvent | React.MouseEvent, id: string, type: 'left' | 'right') => {
+    if (matchingGameWon) return;
+    // e.preventDefault();
+    const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
+    
+    const containerRect = containerRef.current?.getBoundingClientRect();
+    if (!containerRect) return;
+
+    const x = clientX - containerRect.left;
+    const y = clientY - containerRect.top;
+
+    setIsDrawing(true);
+    setDrawingStartNode({ id, type, x, y });
+    setCurrentLine({ x1: x, y1: y, x2: x, y2: y });
     playSoundEffect("click");
-    setPlantStage(1);
-    setWaterCount(0);
-    setWeedWormActive(false);
-    setSunlightActive(false);
-    playVietnameseText(
-      "Bé đã gieo mầm hạt giống thần kỳ xuống đất rồi! Mau tưới nước thôi!",
-    );
   };
 
-  // Water the sprout
-  const handleWaterPlant = () => {
-    if (plantStage === 0 || plantStage === 4) return;
-    playSoundEffect("click");
+  const handleTouchMove = (e: React.TouchEvent | React.MouseEvent) => {
+    if (!isDrawing || !currentLine || !containerRef.current) return;
+    const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
+    
+    const containerRect = containerRef.current.getBoundingClientRect();
+    setCurrentLine({
+      ...currentLine,
+      x2: clientX - containerRect.left,
+      y2: clientY - containerRect.top
+    });
+  };
 
-    const newWater = waterCount + 1;
-    setWaterCount(newWater);
+  const handleTouchEnd = (e: React.TouchEvent | React.MouseEvent, endId: string, endType: 'left' | 'right') => {
+    if (!isDrawing || !drawingStartNode) return;
+    setIsDrawing(false);
+    setCurrentLine(null);
 
-    if (newWater % 2 === 0) {
-      // Sprout or expand Stage
-      setPlantStage((prev) => Math.min(prev + 1, 3));
-      // Randomly attract a worm/weeds to handle
-      if (Math.random() > 0.4) {
-        setWeedWormActive(true);
+    if (drawingStartNode.type !== endType) {
+      const pairId1 = drawingStartNode.id;
+      const pairId2 = endId;
+      
+      if (pairId1 === pairId2) {
+        if (!connectedPairs.includes(pairId1)) {
+          const newConnections = [...connectedPairs, pairId1];
+          setConnectedPairs(newConnections);
+          
+          playSoundEffect("success");
+          
+          const matchedItem = scrambledRight.find(r => r.id === pairId1);
+          if (matchedItem) {
+            if (matchedItem.audioUrl) {
+              const audio = new Audio(matchedItem.audioUrl);
+              audio.play().catch(e => console.error("Audio play error:", e));
+            }
+            // Removed default playVietnameseText as requested
+          }
+          
+          if (newConnections.length === scrambledLeft.length) {
+            setMatchingGameWon(true);
+            const updated = {
+              ...userStats,
+              stars: userStats.stars + 2,
+              coins: userStats.coins + 10,
+            };
+            onUpdateStats(updated);
+            setTimeout(() => {
+              playSoundEffect("clapping");
+              playVietnameseText("Chúc mừng bé đã nối đúng tất cả!");
+            }, 1000);
+          }
+        }
+      } else {
+        playSoundEffect("wrong");
       }
-      playVietnameseText(
-        "Cây uống nước rào rào lớn nhanh thổi thổi rồi kìa bé giỏi lắm!",
-      );
     } else {
-      playVietnameseText("Bé đã tưới cho cây làn nước mát ngọt lịm!");
+      playSoundEffect("wrong");
     }
   };
 
-  // Sunlight therapy
-  const handleSunlight = () => {
-    if (plantStage < 2 || plantStage === 4) return;
-    playSoundEffect("click");
-    setSunlightActive(true);
-    setTimeout(() => {
-      setSunlightActive(false);
-      // Fast upgrade to floral bloom
-      if (plantStage === 2) {
-        setPlantStage(3);
-        playVietnameseText(
-          "Cây quang hợp ánh mặt trời dịu hiền và đâm chồi nở hoa rồi!",
-        );
-      } else if (plantStage === 3) {
-        setPlantStage(4);
-        setRipeFruitCount(4 + Math.floor(Math.random() * 4)); // 4 to 7 apples
-        playVietnameseText(
-          "Cây đơm hoa kết trái đỏ mọng ngọt lịm rồi kìa bé ơi! Mau thu hoạch nào!",
-        );
-      }
-    }, 1500);
-  };
+  const updateNodePosition = (id: string, type: 'left' | 'right', node: HTMLElement | null) => {
+    if (!node || !containerRef.current) return;
+    const containerRect = containerRef.current.getBoundingClientRect();
+    const rect = node.getBoundingClientRect();
+    const x = rect.left - containerRect.left + (type === 'left' ? rect.width : 0);
+    const y = rect.top - containerRect.top + rect.height / 2;
 
-  // Catch worm & remove weedy mess
-  const handleCatchWorm = () => {
-    if (!weedWormActive) return;
-    playSoundEffect("victory");
-    setWeedWormActive(false);
-
-    // extra point
-    const updated = {
-      ...userStats,
-      coins: userStats.coins + 5,
-    };
-    onUpdateStats(updated);
-    playVietnameseText(
-      "Chú sâu nhỏ béo nục đã được gắp ra ngoài rồi! Cây cảm ơn bé nhiều lắm nha!",
-    );
-  };
-
-  // Harvest apples
-  const handleHarvestApple = (fruitIndex: number) => {
-    if (plantStage !== 4 || ripeFruitCount <= 0) return;
-    playSoundEffect("victory");
-    setRipeFruitCount((prev) => prev - 1);
-    const newTotal = harvestedFruitCount + 1;
-    saveHarvestedApples(newTotal);
-
-    if (ripeFruitCount === 1) {
-      // Harvested all! Reset soil
-      setPlantStage(0);
-      setWaterCount(0);
-      playVietnameseText(
-        "Bé đã nhặt sạch trái chín trong rổ! Hãy gieo hạt giống mới nha!",
-      );
+    if (type === 'left') {
+      setLeftNodes(prev => {
+        const existing = prev.find(n => n.id === id);
+        if (existing && existing.x === x && existing.y === y) return prev;
+        return [...prev.filter(n => n.id !== id), { id, x, y }];
+      });
     } else {
-      playVietnameseText("Đã bỏ rổ một quả táo đỏ chín mọng!");
+      setRightNodes(prev => {
+        const existing = prev.find(n => n.id === id);
+        if (existing && existing.x === x && existing.y === y) return prev;
+        return [...prev.filter(n => n.id !== id), { id, x, y }];
+      });
     }
   };
 
-  // Sell fruits for stars!
-  // Cost: 5 apples for 1 star (sao)
-  const handleTradeFruits = () => {
-    if (harvestedFruitCount < 5) {
-      playSoundEffect("pop");
-      alert(
-        `Bé ơi! Bé cần hái ít nhất 5 quả táo chín 🍎 trong giỏ để đổi lấy 1 ⭐ vàng nhé. (Hiện bé có: ${harvestedFruitCount} quả)`,
-      );
-      playVietnameseText(
-        "Bé hãy hái thật nhiều táo ngọt thơm nữa rồi đổi sao nhé!",
-      );
-      return;
-    }
-
-    playSoundEffect("success");
-    const newApples = harvestedFruitCount - 5;
-    saveHarvestedApples(newApples);
-
-    const updated = {
-      ...userStats,
-      stars: userStats.stars + 1,
-      coins: userStats.coins + 15,
-    };
-    onUpdateStats(updated);
-    playVietnameseText(
-      "Tèn ten! 5 quả quả cải đổi lấy một ngôi sao lấp lánh và vàng hào phóng!",
-    );
-  };
+  const getActiveMatchingGame = () => matchingGames.find(g => g.id === selectedMatchingGameId);
 
   return (
     <div
@@ -421,16 +409,16 @@ export default function LearningGames({
         <button
           onClick={() => {
             playSoundEffect("click");
-            setActiveGame("farm");
+            setActiveGame("matching");
           }}
           className={`py-3.5 rounded-2xl text-xs sm:text-sm font-black transition-all flex items-center justify-center gap-2 outline-none cursor-pointer ${
-            activeGame === "farm"
-              ? "bg-gradient-to-r from-emerald-400 to-green-500 text-white shadow-md border-b-4 border-green-700"
+            activeGame === "matching"
+              ? "bg-gradient-to-r from-purple-400 to-indigo-500 text-white shadow-md border-b-4 border-indigo-700"
               : "text-slate-600 hover:bg-white/55"
           }`}
         >
-          <span>🌱</span>
-          <span>Ý THỨC TRỒNG CÂY QUẢ</span>
+          <span>🔗</span>
+          <span>TRÒ CHƠI NỐI HÌNH VÀ TÊN</span>
         </button>
       </div>
 
@@ -616,275 +604,183 @@ export default function LearningGames({
           </motion.div>
         )}
 
-        {/* GAME SCREEN 2: FRUIT TREE FARM */}
-        {activeGame === "farm" && (
+        {/* GAME SCREEN 2: MATCHING GAME */}
+        {activeGame === "matching" && (
           <motion.div
-            key="farm-screen"
+            key="matching-screen"
             initial={{ opacity: 0, y: 15 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -15 }}
-            className="flex flex-col lg:flex-row gap-6 items-stretch"
+            className="flex flex-col gap-6"
           >
-            {/* Interactive Farm tools */}
-            <div className="w-full lg:w-1/3 bg-slate-50/50 p-5 rounded-3xl border border-slate-200 flex flex-col justify-between space-y-5">
-              <div>
-                <span className="text-[9px] font-black text-emerald-700 bg-emerald-150 px-2.5 py-0.5 border border-emerald-200 rounded-full uppercase tracking-wider block w-max">
-                  CÔNG CỤ NÔNG DÂN
-                </span>
-                <h5 className="text-base font-black text-[#5C3C10] mt-2 bubble-font flex items-center gap-1.5">
-                  <span>Chăm sóc đất đai</span>
-                  <span>🚜</span>
+            {!selectedMatchingGameId ? (
+              <div className="w-full bg-slate-50/70 p-5 rounded-3xl border border-slate-200 space-y-4">
+                <h5 className="text-sm font-black text-slate-800 uppercase tracking-wider mb-4 flex items-center gap-1">
+                  <span>🔑 Chọn bài nối hình để bắt đầu:</span>
                 </h5>
-                <p className="text-[11px] text-[#A0522D] font-extrabold mt-0.5 leading-snug">
-                  Bé hãy dùng dụng cụ phù hợp dưới đây để giúp cây lớn ríu rít
-                  nhé:
-                </p>
 
-                {/* Vertical Toolbar buttons */}
-                <div className="space-y-3.5 mt-5">
-                  {/* Tool 1: Sow Seed */}
-                  <button
-                    onClick={handleSowSeed}
-                    disabled={plantStage > 0}
-                    className={`w-full p-3.5 rounded-2xl flex items-center gap-3.5 border-2 text-left transition-all cursor-pointer outline-none ${
-                      plantStage === 0
-                        ? "bg-amber-100 border-amber-300 hover:bg-amber-150 font-black text-amber-950 animate-pulse"
-                        : "bg-white border-slate-150 text-slate-400 opacity-55 cursor-not-allowed"
-                    }`}
-                  >
-                    <span className="text-2xl">🌰</span>
-                    <div>
-                      <span className="block text-xs font-black">
-                        Gieo hạt giống hữu cơ
-                      </span>
-                      <span className="block text-[10px] opacity-80 font-semibold">
-                        Khởi tạo sự sống mới
-                      </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                  {matchingGames.length === 0 && (
+                    <div className="col-span-full text-center py-8 text-slate-500 font-medium text-sm">
+                      Chưa có trò chơi nối hình nào. Thầy cô/Ba mẹ hãy vào mục Quản lý Nối hình để thêm mới nhé!
                     </div>
-                  </button>
-
-                  {/* Tool 2: Water */}
-                  <button
-                    onClick={handleWaterPlant}
-                    disabled={plantStage === 0 || plantStage === 4}
-                    className={`w-full p-3.5 rounded-2xl flex items-center gap-3.5 border-2 text-left transition-all cursor-pointer outline-none ${
-                      plantStage > 0 && plantStage < 4
-                        ? "bg-blue-100 border-blue-300 hover:bg-blue-150 font-black text-blue-950 shadow-xs"
-                        : "bg-white border-slate-150 text-slate-400 opacity-55 cursor-not-allowed"
-                    }`}
-                  >
-                    <span className="text-2xl">💧</span>
-                    <div>
-                      <span className="block text-xs font-black">
-                        Tưới nước máy ngọt mát
-                      </span>
-                      <span className="block text-[10px] opacity-80 font-semibold">
-                        Lượng tưới tinh thể, lớn thêm tí nữa
-                      </span>
-                    </div>
-                  </button>
-
-                  {/* Tool 3: Sunlight Sunshine */}
-                  <button
-                    onClick={handleSunlight}
-                    disabled={plantStage < 2 || plantStage === 4}
-                    className={`w-full p-3.5 rounded-2xl flex items-center gap-3.5 border-2 text-left transition-all cursor-pointer outline-none ${
-                      plantStage >= 2 && plantStage < 4
-                        ? "bg-orange-100 border-orange-300 hover:bg-orange-150 font-black text-orange-950 shadow-xs"
-                        : "bg-white border-slate-150 text-slate-400 opacity-55 cursor-not-allowed"
-                    }`}
-                  >
-                    <span className="text-2xl">☀️</span>
-                    <div>
-                      <span className="block text-xs font-black">
-                        Chiếu nắng mặt trời vàng
-                      </span>
-                      <span className="block text-[10px] opacity-80 font-semibold">
-                        Giúp cây nở hoa kết trái đỏ
-                      </span>
-                    </div>
-                  </button>
-
-                  {/* Option worm catcher tool */}
-                  {weedWormActive && (
-                    <button
-                      onClick={handleCatchWorm}
-                      className="w-full p-3.5 bg-red-100 border-2 border-red-350 rounded-2xl flex items-center gap-3.5 hover:bg-red-200 transition-all cursor-pointer text-left text-red-950 animate-bounce font-black shadow-sm outline-none"
-                    >
-                      <span className="text-2xl">🐛</span>
-                      <div>
-                        <span className="block text-xs">
-                          Phát hiện bọ dừa sâu hại!
-                        </span>
-                        <span className="block text-[10px] text-red-700 font-extrabold uppercase animate-pulse">
-                          Chạm ngay để tiêu diệt bọ sâu nhận +5🪙
-                        </span>
-                      </div>
-                    </button>
                   )}
+                  {matchingGames.map((game) => (
+                    <div key={game.id} className="relative group">
+                      <button
+                        onClick={() => startMatchingGame(game.id)}
+                        className="w-full h-full bg-white rounded-2.5xl p-5 border-2 border-slate-200 hover:border-purple-300 hover:shadow-md transition-all flex flex-col items-center justify-center text-center outline-none overflow-hidden"
+                      >
+                        <div className="w-16 h-16 rounded-full bg-purple-100 flex items-center justify-center mb-3">
+                          <span className="text-2xl">🔗</span>
+                        </div>
+                        <span className="block text-sm font-black text-slate-800 leading-tight mb-2">
+                          {game.name}
+                        </span>
+                        <span className="text-xs font-semibold text-slate-500">
+                          {game.pairs.length} cặp hình & chữ
+                        </span>
+                      </button>
+                    </div>
+                  ))}
                 </div>
               </div>
+            ) : (
+              <div className="w-full relative">
+                <div className="flex items-center justify-between mb-4">
+                  <button
+                    onClick={() => {
+                      playSoundEffect("pop");
+                      setSelectedMatchingGameId("");
+                    }}
+                    className="flex items-center gap-1.5 text-xs font-black text-slate-600 bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-xl transition-all"
+                  >
+                    <LucideIcons.ArrowLeft className="w-4 h-4" />
+                    <span>CHỌN BÀI KHÁC</span>
+                  </button>
+                  <div className="text-sm font-black text-purple-700 bg-purple-50 px-4 py-2 rounded-xl border border-purple-200">
+                    BÀI: {getActiveMatchingGame()?.name}
+                  </div>
+                  <button
+                    onClick={() => startMatchingGame(selectedMatchingGameId)}
+                    className="flex items-center gap-1.5 text-xs font-black text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-4 py-2 rounded-xl transition-all"
+                  >
+                    <LucideIcons.RefreshCw className="w-4 h-4" />
+                    <span>CHƠI LẠI</span>
+                  </button>
+                </div>
 
-              {/* Basket exchange star panel */}
-              <div className="bg-[#FFFCE4] border-2 border-dashed border-yellow-300 p-4 rounded-2.5xl text-center">
-                <span className="text-3xl block">🧺</span>
-                <span className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
-                  GIỎ TRÁI CÂY CỦA BÉ
-                </span>
-                <span className="block text-xl font-black text-amber-950 bubble-font mt-0.5">
-                  {harvestedFruitCount} QUẢ TÁO 🍎
-                </span>
-
-                <button
-                  onClick={handleTradeFruits}
-                  disabled={harvestedFruitCount < 5}
-                  className={`w-full mt-3 py-2.5 px-4 rounded-xl text-xs font-black transition-all border-b-4 outline-none ${
-                    harvestedFruitCount >= 5
-                      ? "bg-gradient-to-r from-yellow-400 to-orange-500 border-orange-600 text-white font-black animate-pulse cursor-pointer"
-                      : "bg-slate-250 border-slate-300 text-slate-400 cursor-not-allowed"
-                  }`}
+                <div 
+                  ref={containerRef}
+                  className="relative w-full bg-slate-50 rounded-3xl border-2 border-slate-200 p-6 min-h-[500px] flex justify-between touch-none overflow-hidden select-none"
+                  onMouseMove={handleTouchMove}
+                  onTouchMove={handleTouchMove}
+                  onMouseUp={() => { if (isDrawing) { setIsDrawing(false); setCurrentLine(null); } }}
+                  onTouchEnd={() => { if (isDrawing) { setIsDrawing(false); setCurrentLine(null); } }}
+                  onMouseLeave={() => { if (isDrawing) { setIsDrawing(false); setCurrentLine(null); } }}
                 >
-                  ĐỔI TÁO LẤY SAO ⭐ (+15🪙)
-                </button>
-                <span className="block text-[9.5px] text-[#A0522D] font-extrabold mt-1.5 opacity-80 font-sans">
-                  * 5 quả táo chín 🍎 sẽ đổi lấy 1 sao lấp lánh đấy bé iu!
-                </span>
-              </div>
-            </div>
-
-            {/* Farm stage center arena view */}
-            <div
-              className={`flex-1 w-full bg-gradient-to-b ${sunlightActive ? "from-amber-200/40 to-sky-100" : "from-sky-100 to-emerald-50"} rounded-3xl border border-slate-250 p-6 flex flex-col justify-between items-center relative overflow-hidden min-h-[440px]`}
-            >
-              {/* Sunlight overlay shine effect */}
-              {sunlightActive && (
-                <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-yellow-300/40 to-transparent pointer-events-none filter blur-md animate-pulse"></div>
-              )}
-
-              {/* Floating Cloud decoration */}
-              <div className="absolute top-8 left-12 text-3xl opacity-20 pointer-events-none animate-bounce-slow">
-                ☁️
-              </div>
-              <div className="absolute top-12 right-12 text-4xl opacity-15 pointer-events-none animate-bounce-slow">
-                ☁️
-              </div>
-
-              {/* Display board step text */}
-              <div className="text-center z-10 w-full mb-4">
-                <span className="text-[10px] tracking-widest text-[#2ECC71] bg-[#EAFAF1] font-black px-3.5 py-1.5 rounded-full border border-[#D5F5E3]">
-                  {plantStage === 0 && "🌱 ĐẤT ĐANG CHỜ GIEO HẠT"}
-                  {plantStage === 1 && "🌰 MẦM NON ĐANG THUỘC ĐẤT"}
-                  {plantStage === 2 && "🌿 CÂY BẮT ĐẦU VƯƠN CAO LÁ XANH"}
-                  {plantStage === 3 && "🌸 HOA NỞ THƠM NGÀO NGẠT KHẮP NƠI"}
-                  {plantStage === 4 && "🍎 TÁO ĐỎ CHÍN TRĨU CÀNH QUẢ NGỌT"}
-                </span>
-
-                <div className="h-6 mt-2 relative">
-                  {weedWormActive && (
-                    <span className="text-[10px] text-red-600 bg-red-50 border border-red-200 px-3 py-0.5 rounded-full font-black animate-pulse inline-block">
-                      🐛 Ôi có sâu đục thân cây hoa rồi! Bé cứu cây bé ơ!
-                    </span>
+                  {matchingGameWon && (
+                    <div className="absolute inset-0 bg-white/90 z-50 flex flex-col items-center justify-center p-6 text-center animate-fade-in backdrop-blur-sm">
+                      <span className="text-7xl animate-bounce-slow">🎉🏅🌟</span>
+                      <h3 className="text-2xl font-black text-purple-950 bubble-font mt-4">
+                        BÉ GIỎI QUÁ! ĐÚNG HẾT RỒI!
+                      </h3>
+                      <p className="text-sm bg-purple-50 text-purple-700 border border-purple-200 py-2 px-5 rounded-2xl font-black shadow-xs mt-4">
+                        🎁 Đã thưởng: +2 ⭐ và +10 vàng
+                      </p>
+                      <button
+                        onClick={() => setSelectedMatchingGameId("")}
+                        className="mt-6 font-black text-white bg-purple-600 hover:bg-purple-700 px-8 py-3.5 rounded-2xl text-sm transition-colors"
+                      >
+                        CHỌN BÀI KHÁC NHA
+                      </button>
+                    </div>
                   )}
-                </div>
-              </div>
 
-              {/* Plant Pot Canvas Visual */}
-              <div className="relative flex-1 flex flex-col items-center justify-end w-full pb-8 select-none">
-                {/* 🌰 Stage 1 seed */}
-                {plantStage === 1 && (
-                  <motion.div
-                    initial={{ scale: 0.5, y: 10 }}
-                    animate={{ scale: 1, y: 0 }}
-                    className="text-4xl filter drop-shadow-xs z-10 mb-[-10px]"
-                  >
-                    🌰
-                  </motion.div>
-                )}
-
-                {/* 🌱 Stage 2 sprout */}
-                {plantStage === 2 && (
-                  <motion.div
-                    initial={{ scale: 0.6, y: 20 }}
-                    animate={{ scale: 1, y: 0 }}
-                    className="text-6xl filter drop-shadow-xs z-10 mb-[-10px] animate-pulse"
-                  >
-                    🌱
-                  </motion.div>
-                )}
-
-                {/* 🌿🌸 Stage 3 flowering */}
-                {plantStage === 3 && (
-                  <motion.div
-                    initial={{ scale: 0.7, y: 30 }}
-                    animate={{ scale: 1, y: 0 }}
-                    className="text-7xl sm:text-8xl filter drop-shadow-xs z-10 mb-[-12px] relative flex flex-col items-center"
-                  >
-                    <span>🌸</span>
-                    <span className="text-3xl absolute top-0 left-[-2px]">
-                      🌱
-                    </span>
-                  </motion.div>
-                )}
-
-                {/* 🌳🍎 Stage 4 tree full of apples */}
-                {plantStage === 4 && (
-                  <motion.div
-                    initial={{ scale: 0.8, y: 30 }}
-                    animate={{ scale: 1, y: 0 }}
-                    className="w-48 h-48 sm:w-56 sm:h-56 z-10 mb-[-10px] relative flex items-center justify-center"
-                  >
-                    {/* Big lush tree decoration */}
-                    <span className="text-[130px] sm:text-[160px] filter drop-shadow-md absolute inset-0 text-center leading-none select-none z-0">
-                      🌳
-                    </span>
-
-                    {/* Interactive Apples floating inside tree area */}
-                    {Array.from({ length: ripeFruitCount }).map((_, idx) => {
-                      // coordinates distributed inside green bushes
-                      const offsets = [
-                        { top: "35px", left: "46px" },
-                        { top: "45px", left: "96px" },
-                        { top: "75px", left: "33px" },
-                        { top: "70px", left: "116px" },
-                        { top: "55px", left: "72px" },
-                        { top: "95px", left: "55px" },
-                        { top: "88px", left: "90px" },
-                      ];
-                      const style = offsets[idx % offsets.length];
-
+                  {/* Left Column (Images) */}
+                  <div className="flex flex-col gap-6 w-[120px] sm:w-[150px] relative z-20">
+                    {scrambledLeft.map((item) => {
+                      const isConnected = connectedPairs.includes(item.id);
                       return (
-                        <button
-                          key={idx}
-                          onClick={() => handleHarvestApple(idx)}
-                          style={{ top: style.top, left: style.left }}
-                          className="absolute z-10 w-9 h-9 bg-white hover:scale-110 active:scale-95 text-lg rounded-full border border-yellow-250 shadow-md flex items-center justify-center transition-all animate-bounce outline-none cursor-pointer"
-                          title="Hái táo bỏ giỏ nha bé cưng"
+                        <div
+                          key={`left-${item.id}`}
+                          id={`left-${item.id}`}
+                          ref={el => updateNodePosition(item.id, 'left', el)}
+                          className={`w-full aspect-square rounded-2xl border-4 ${isConnected ? 'border-emerald-400 bg-emerald-50 opacity-50' : 'border-slate-300 bg-white hover:border-purple-400 cursor-pointer'} shadow-sm flex items-center justify-center overflow-hidden relative transition-all select-none`}
+                          onMouseDown={e => { if (!isConnected) handleTouchStart(e, item.id, 'left'); }}
+                          onTouchStart={e => { if (!isConnected) handleTouchStart(e, item.id, 'left'); }}
+                          onMouseUp={e => { if (!isConnected) handleTouchEnd(e, item.id, 'left'); }}
+                          onTouchEnd={e => { if (!isConnected) handleTouchEnd(e, item.id, 'left'); }}
                         >
-                          🍎
-                        </button>
+                          {item.imageUrl && <img src={item.imageUrl} alt="Matching" className="w-full h-full object-cover pointer-events-none" />}
+                          <div className={`absolute right-[-8px] top-1/2 -translate-y-1/2 w-4 h-4 rounded-full ${isConnected ? 'bg-emerald-500' : 'bg-purple-500'}`} />
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {/* SVG Lines Layer */}
+                  <svg className="absolute inset-0 w-full h-full pointer-events-none z-10 overflow-visible">
+                    {/* Drawn Connections */}
+                    {connectedPairs.map((pairId, idx) => {
+                      const fromNode = leftNodes.find(n => n.id === pairId);
+                      const toNode = rightNodes.find(n => n.id === pairId);
+                      if (!fromNode || !toNode) return null;
+                      return (
+                        <line
+                          key={idx}
+                          x1={fromNode.x}
+                          y1={fromNode.y}
+                          x2={toNode.x}
+                          y2={toNode.y}
+                          stroke="#10B981"
+                          strokeWidth="6"
+                          strokeLinecap="round"
+                          className="animate-fade-in"
+                        />
                       );
                     })}
-                  </motion.div>
-                )}
+                    {/* Active Drawing Line */}
+                    {isDrawing && currentLine && (
+                      <line
+                        x1={currentLine.x1}
+                        y1={currentLine.y1}
+                        x2={currentLine.x2}
+                        y2={currentLine.y2}
+                        stroke="#A855F7"
+                        strokeWidth="6"
+                        strokeDasharray="10, 10"
+                        strokeLinecap="round"
+                      />
+                    )}
+                  </svg>
 
-                {/* Big Pot below */}
-                <div className="w-32 h-14 bg-gradient-to-r from-amber-700 to-amber-800 rounded-b-xl border-t-8 border-amber-600 shadow-md relative z-10 flex items-center justify-center">
-                  <span className="text-[9px] font-black text-amber-200 tracking-wider">
-                    CHẬU ĐẤT CỦA BÉ
-                  </span>
-                  {/* Dirt line */}
-                  <div className="absolute top-0 inset-x-0 h-1.5 bg-[#4A3225]"></div>
+                  {/* Right Column (Texts) */}
+                  <div className="flex flex-col gap-6 w-[150px] sm:w-[200px] relative z-20">
+                    {scrambledRight.map((item) => {
+                      const isConnected = connectedPairs.includes(item.id);
+                      return (
+                        <div
+                          key={`right-${item.id}`}
+                          id={`right-${item.id}`}
+                          ref={el => updateNodePosition(item.id, 'right', el)}
+                          className={`w-full h-[120px] sm:h-[150px] rounded-2xl border-4 ${isConnected ? 'border-emerald-400 bg-emerald-50 opacity-50' : 'border-slate-300 bg-white hover:border-purple-400 cursor-pointer'} shadow-sm flex items-center justify-center p-4 relative transition-all text-center select-none`}
+                          onMouseDown={e => { if (!isConnected) handleTouchStart(e, item.id, 'right'); }}
+                          onTouchStart={e => { if (!isConnected) handleTouchStart(e, item.id, 'right'); }}
+                          onMouseUp={e => { if (!isConnected) handleTouchEnd(e, item.id, 'right'); }}
+                          onTouchEnd={e => { if (!isConnected) handleTouchEnd(e, item.id, 'right'); }}
+                        >
+                          <div className={`absolute left-[-8px] top-1/2 -translate-y-1/2 w-4 h-4 rounded-full ${isConnected ? 'bg-emerald-500' : 'bg-purple-500'}`} />
+                          <span className="font-black text-slate-800 pointer-events-none select-none text-sm sm:text-base md:text-xl leading-tight">
+                            {item.text}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
                 </div>
               </div>
-
-              {/* Status footer banner */}
-              <div className="text-center z-10">
-                <span className="text-[11px] font-mono font-black text-[#5C3C10]">
-                  Giai đoạn phát triển: {plantStage}/4 • Cấp nước tưới:{" "}
-                  {waterCount} lần
-                </span>
-              </div>
-            </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
