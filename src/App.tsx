@@ -169,6 +169,8 @@ export default function App() {
 
   const handleFirebaseBackup = async () => {
     try {
+      const customPuzzlesStr = localStorage.getItem('be_hoc_tieng_viet_custom_puzzles');
+      const hiddenPuzzlesStr = localStorage.getItem('be_hoc_tieng_viet_hidden_puzzles');
       const data = {
         userStats,
         overrides,
@@ -176,7 +178,9 @@ export default function App() {
         showFunFact,
         mathLibrary: getMathIllustrations(),
         customSounds: getCustomSounds(),
-        farmApples: localStorage.getItem('be_hoc_tieng_viet_farm_apples')
+        farmApples: localStorage.getItem('be_hoc_tieng_viet_farm_apples'),
+        customPuzzles: customPuzzlesStr ? JSON.parse(customPuzzlesStr) : [],
+        hiddenPuzzles: hiddenPuzzlesStr ? JSON.parse(hiddenPuzzlesStr) : []
       };
       return await syncDataToFirebase(data);
     } catch (error) {
@@ -208,6 +212,21 @@ export default function App() {
         localStorage.setItem('be_hoc_tieng_viet_farm_apples', data.farmApples);
       }
       
+      if (data.customPuzzles) {
+        try {
+          localStorage.setItem('be_hoc_tieng_viet_custom_puzzles', JSON.stringify(data.customPuzzles));
+        } catch (e) {
+          console.error("Failed to restore custom puzzles due to quota", e);
+        }
+      }
+      if (data.hiddenPuzzles) {
+        try {
+          localStorage.setItem('be_hoc_tieng_viet_hidden_puzzles', JSON.stringify(data.hiddenPuzzles));
+        } catch (e) {
+          console.error("Failed to restore hidden puzzles due to quota", e);
+        }
+      }
+
       return true;
     } catch (error) {
       console.error("Firebase restore error", error);

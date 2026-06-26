@@ -36,6 +36,8 @@ export interface AppDataSync {
   mathLibrary: MathLibraryItem[];
   customSounds: CustomSounds;
   farmApples: string | null;
+  customPuzzles?: any[];
+  hiddenPuzzles?: string[];
   updatedAt: number;
 }
 
