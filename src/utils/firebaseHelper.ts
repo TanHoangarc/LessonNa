@@ -1,5 +1,5 @@
 import { GoogleAuthProvider, signInWithPopup, signOut, User, onAuthStateChanged } from 'firebase/auth';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc, collection, deleteDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { Topic, UserStats } from '../types';
 import { MathLibraryItem, CustomSounds } from './mathLibraryHelper';
@@ -44,12 +44,40 @@ export const syncDataToFirebase = async (data: Omit<AppDataSync, 'updatedAt'>): 
   
   try {
     const userDocRef = doc(db, 'users', auth.currentUser.uid);
-    // Use JSON parse/stringify to cleanly remove any `undefined` values which Firestore does not support
-    const sanitizedData = JSON.parse(JSON.stringify({
+    
+    const oldMeta = await getDoc(userDocRef);
+    let oldChunkCount = 0;
+    if (oldMeta.exists()) {
+      oldChunkCount = oldMeta.data().chunkCount || 0;
+    }
+
+    // Convert to JSON and cleanly remove any undefined values
+    const jsonString = JSON.stringify({
       ...data,
       updatedAt: Date.now()
-    }));
-    await setDoc(userDocRef, sanitizedData);
+    });
+
+    const CHUNK_SIZE = 900000; // ~900KB per chunk
+    const chunks = [];
+    for (let i = 0; i < jsonString.length; i += CHUNK_SIZE) {
+      chunks.push(jsonString.substring(i, i + CHUNK_SIZE));
+    }
+
+    await setDoc(userDocRef, {
+      updatedAt: Date.now(),
+      chunkCount: chunks.length,
+      isChunked: true
+    });
+
+    const chunksRef = collection(db, 'users', auth.currentUser.uid, 'chunks');
+    for (let i = 0; i < chunks.length; i++) {
+      await setDoc(doc(chunksRef, i.toString()), { data: chunks[i] });
+    }
+    
+    for (let i = chunks.length; i < oldChunkCount; i++) {
+      await deleteDoc(doc(chunksRef, i.toString()));
+    }
+
     return true;
   } catch (error) {
     console.error("Lỗi đồng bộ lên Firebase:", error);
@@ -63,9 +91,28 @@ export const loadDataFromFirebase = async (): Promise<AppDataSync | null> => {
   try {
     const userDocRef = doc(db, 'users', auth.currentUser.uid);
     const snapshot = await getDoc(userDocRef);
-    if (snapshot.exists()) {
-      return snapshot.data() as AppDataSync;
+    if (!snapshot.exists()) {
+      return null;
     }
+    
+    const metaData = snapshot.data();
+    
+    if (metaData.isChunked && metaData.chunkCount) {
+      let fullJson = '';
+      const chunksRef = collection(db, 'users', auth.currentUser.uid, 'chunks');
+      for (let i = 0; i < metaData.chunkCount; i++) {
+        const chunkSnap = await getDoc(doc(chunksRef, i.toString()));
+        if (chunkSnap.exists()) {
+          fullJson += chunkSnap.data().data;
+        }
+      }
+      if (fullJson) {
+        return JSON.parse(fullJson) as AppDataSync;
+      }
+    } else {
+      return metaData as AppDataSync;
+    }
+    
     return null;
   } catch (error) {
     console.error("Lỗi tải dữ liệu từ Firebase:", error);
